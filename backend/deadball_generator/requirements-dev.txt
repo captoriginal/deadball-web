@@ -1,0 +1,2 @@
+# Development extras (tests, lint, formatting)
+pytest>=8.0.0

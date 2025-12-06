@@ -1,0 +1,5 @@
+Type,Name,Team,BatOrder,Pos,Hand,BT,OBT,Traits
+Hitter,Alice,Alpha,1,CF,L,1,2,Fast
+Hitter,Bob,Beta,2,1B,R,2,3,Strong
+Hitter,Charlie,Beta,7.1,RF,S,2,2,Utility
+Pitcher,Pat,Alpha,,P,R,,,Ace

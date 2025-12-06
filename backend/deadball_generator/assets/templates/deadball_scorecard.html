@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Deadball Scorecard</title>
+  <style>
+    * { box-sizing: border-box; }
+
+    :root {
+      --line: #1b1b1b;
+      --text: #1b1b1b;
+      --muted: #1f1f1f;
+      --bg: #ffffff;
+      --card: #ffffff;
+      --heavy: 3px;
+    }
+
+    body {
+      font-family: "Helvetica Neue", Arial, sans-serif;
+      margin: 0;
+      padding: 18px;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .scorecard {
+      width: 700px;
+      margin: 0 auto 0;
+      background: var(--card);
+      border: none;
+      padding: 0;
+    }
+    .scorecard + .scorecard {
+      margin-top: 12px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 18px;
+      margin-bottom: 12px;
+    }
+
+    h1 {
+      font-family: Impact, "Bebas Neue", "Arial Black", sans-serif;
+      font-size: 50px;
+      letter-spacing: 0.5px;
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .scorebox table {
+      border-collapse: collapse;
+      font-size: 9px;
+      color: var(--muted);
+      width: 240px;
+      height: 58px;
+    }
+
+    .scorebox th,
+    .scorebox td {
+      border: 1px solid var(--line);
+      padding: 2px 3px;
+      text-align: center;
+      min-width: 16px;
+      height: 16px;
+    }
+
+    .scorebox th.label,
+    .scorebox td.label {
+      text-align: left;
+      padding-left: 5px;
+      min-width: 40px;
+      font-weight: 700;
+    }
+
+    .section-title {
+      font-weight: 700;
+      margin: 4px 0 3px;
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.2px;
+      text-transform: uppercase;
+    }
+
+    .main-table,
+    .small-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 10px;
+      color: var(--muted);
+      table-layout: fixed;
+    }
+
+    .main-table { border: 1px solid var(--line); margin-bottom: 10px; }
+    .small-table { border: 1px solid var(--line); }
+
+    .main-table th,
+    .main-table td,
+    .small-table th,
+    .small-table td {
+      border: 1px solid var(--line);
+      padding: 2px;
+      text-align: center;
+      height: 20px;
+      font-weight: 700;
+    }
+
+    .main-table th {
+      background: transparent;
+      text-transform: uppercase;
+    }
+
+    .small-table th { text-transform: uppercase; }
+
+    .main-table td {
+      font-weight: 600;
+      height: 40px;
+    }
+
+    .main-table th.name,
+    .main-table td.name {
+      text-align: left;
+      width: 110px;
+      padding-left: 4px;
+    }
+
+    .main-table th.pos,
+    .main-table td.pos { width: 30px; }
+
+    .main-table th.small,
+    .main-table td.small { width: 20px; }
+
+    .main-table th.traits,
+    .main-table td.traits { width: 20px; }
+
+    .main-table th.inn,
+    .main-table td.inn { width: 40px; }
+
+    /* heavy divider between player data and innings */
+    .main-table th.divider,
+    .main-table td.divider {
+      border-left: var(--heavy) solid var(--line);
+    }
+
+    /* Bench column widths */
+    .bench .small-table th:nth-child(1),
+    .bench .small-table td:nth-child(1) {
+      width: 40%;
+      text-align: left;
+      padding-left: 4px;
+    }
+    .bench .small-table th:nth-child(2),
+    .bench .small-table td:nth-child(2) { width: 10%; }
+    .bench .small-table th:nth-child(3),
+    .bench .small-table td:nth-child(3) { width: 10%; }
+    .bench .small-table th:nth-child(4),
+    .bench .small-table td:nth-child(4) { width: 10%; }
+    .bench .small-table th:nth-child(5),
+    .bench .small-table td:nth-child(5) { width: 10%; }
+    .bench .small-table th:nth-child(6),
+    .bench .small-table td:nth-child(6) { width: 20%; }
+
+    /* Pitchers column widths */
+    .pitchers .small-table th:nth-child(1),
+    .pitchers .small-table td:nth-child(1) { width: 8%; }
+    .pitchers .small-table th:nth-child(2),
+    .pitchers .small-table td:nth-child(2) { width: 8%; }
+    .pitchers .small-table th:nth-child(3),
+    .pitchers .small-table td:nth-child(3) {
+      width: 34%;
+      text-align: left;
+      padding-left: 4px;
+    }
+    .pitchers .small-table th:nth-child(4),
+    .pitchers .small-table td:nth-child(4) { width: 8%; }
+    .pitchers .small-table th:nth-child(5),
+    .pitchers .small-table td:nth-child(5) { width: 8%; }
+    .pitchers .small-table th:nth-child(6),
+    .pitchers .small-table td:nth-child(6) { width: 8%; }
+    .pitchers .small-table th:nth-child(7),
+    .pitchers .small-table td:nth-child(7) { width: 8%; }
+    .pitchers .small-table th:nth-child(8),
+    .pitchers .small-table td:nth-child(8) { width: 18%; }
+
+    .flex-row {
+      display: flex;
+      gap: 16px;
+      margin-top: 12px;
+    }
+
+    .flex-col { flex: 1; }
+
+    .bench { flex: 0.45; }
+    .pitchers { flex: 0.55; }
+
+    .notes-block {
+      margin-top: 8px;
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    .notes-block p { margin: 2px 0; }
+
+    .notes-label {
+      font-weight: 800;
+      margin-right: 4px;
+      letter-spacing: 0.2px;
+    }
+
+    .manager-block {
+      margin-top: 10px;
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    .manager-block p { margin: 2px 0; }
+
+    .underline-area {
+      display: inline-block;
+      border-bottom: 1px solid var(--line);
+      min-width: 80px;
+      height: 12px;
+      vertical-align: bottom;
+    }
+
+    .team-label-row {
+      border-top: var(--heavy) solid var(--line);
+      padding-top: 3px;
+      margin-top: 4px;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-weight: 800;
+      letter-spacing: 0.3px;
+    }
+  </style>
+</head>
+<body>
+  <div class="away scorecard">
+    <!-- Top title and scoreboard -->
+    <div class="header">
+      <h1>DEADBALL</h1>
+      <div class="scorebox">
+        <table>
+          <tr>
+            <th class="label"></th>
+            <th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th>
+            <th>7</th><th>8</th><th>9</th><th>10</th><th>11</th><th>12</th>
+            <th>R</th><th>H</th><th>E</th>
+          </tr>
+          <tr>
+            <td class="label">AWAY:</td>
+            <td></td><td></td><td></td><td></td><td></td><td></td>
+            <td></td><td></td><td></td><td></td><td></td><td></td>
+            <td></td><td></td><td></td>
+          </tr>
+          <tr>
+            <td class="label">HOME:</td>
+            <td></td><td></td><td></td><td></td><td></td><td></td>
+            <td></td><td></td><td></td><td></td><td></td><td></td>
+            <td></td><td></td><td></td>
+          </tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- Team label -->
+    <div class="section-title team-label-row away-team">TEAM: <span class="team-label away-team-name"></span></div>
+
+    <!-- Main lineup table -->
+    <table class="main-table">
+      <thead>
+        <tr>
+          <th class="name">PLAYER NAME</th>
+          <th class="pos">POS</th>
+          <th class="small">L/R</th>
+          <th class="small">BT</th>
+          <th class="small">OBT</th>
+          <th class="traits">TRAITS</th>
+          <th class="inn divider">1</th>
+          <th class="inn">2</th>
+          <th class="inn">3</th>
+          <th class="inn">4</th>
+          <th class="inn">5</th>
+          <th class="inn">6</th>
+          <th class="inn">7</th>
+          <th class="inn">8</th>
+          <th class="inn">9</th>
+          <th class="inn">10</th>
+          <th class="inn">11</th>
+          <th class="inn">12</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- 12 lineup rows -->
+        <!-- You can duplicate/add/remove rows as needed -->
+        <tr>
+          <td class="name"></td>
+          <td class="pos"></td>
+          <td class="small"></td>
+          <td class="small"></td>
+          <td class="small"></td>
+          <td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <!-- copy the row below 11 more times -->
+        <tr>
+          <td class="name"></td>
+          <td class="pos"></td>
+          <td class="small"></td>
+          <td class="small"></td>
+          <td class="small"></td>
+          <td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td>
+          <td class="pos"></td>
+          <td class="small"></td>
+          <td class="small"></td>
+          <td class="small"></td>
+          <td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td><td class="pos"></td><td class="small"></td>
+          <td class="small"></td><td class="small"></td><td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td><td class="pos"></td><td class="small"></td>
+          <td class="small"></td><td class="small"></td><td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td><td class="pos"></td><td class="small"></td>
+          <td class="small"></td><td class="small"></td><td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td><td class="pos"></td><td class="small"></td>
+          <td class="small"></td><td class="small"></td><td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td><td class="pos"></td><td class="small"></td>
+          <td class="small"></td><td class="small"></td><td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td><td class="pos"></td><td class="small"></td>
+          <td class="small"></td><td class="small"></td><td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td><td class="pos"></td><td class="small"></td>
+          <td class="small"></td><td class="small"></td><td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td><td class="pos"></td><td class="small"></td>
+          <td class="small"></td><td class="small"></td><td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td><td class="pos"></td><td class="small"></td>
+          <td class="small"></td><td class="small"></td><td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- Bench + Pitchers area -->
+    <div class="flex-row">
+      <!-- Bench -->
+      <div class="flex-col bench">
+        <div class="section-title">BENCH</div>
+        <table class="small-table">
+          <thead>
+            <tr>
+              <th>BENCH</th>
+              <th>POS</th>
+              <th>L/R</th>
+              <th>BT</th>
+              <th>OBT</th>
+              <th>TRAITS</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pitchers -->
+      <div class="flex-col pitchers">
+        <div class="section-title">PITCHERS</div>
+        <table class="small-table">
+          <thead>
+            <tr>
+              <th>IP</th>
+              <th>POS</th>
+              <th>PITCHERS</th>
+              <th>PD</th>
+              <th>L/R</th>
+              <th>BT</th>
+              <th>OBT</th>
+              <th>TRAITS</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- 5 SP rows -->
+            <tr><td></td><td>SP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>SP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>SP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>SP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>SP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <!-- 7 RP rows -->
+            <tr><td></td><td>RP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>RP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>RP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>RP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>RP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>RP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>RP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Notes / traits area -->
+    <div class="notes-block">
+      <p>
+        <span class="notes-label">OPPOSING PITCHER:</span>
+        LHP / RHP
+      </p>
+      <p>
+        <span class="notes-label">PITCH DIE:</span>
+        20&nbsp;&nbsp;12&nbsp;&nbsp;8&nbsp;&nbsp;4&nbsp;&nbsp;-4&nbsp;&nbsp;-8
+      </p>
+      <p>
+        <span class="notes-label">TRAITS:</span>
+        K&nbsp;&nbsp;GB&nbsp;&nbsp;CN&nbsp;&nbsp;ST
+      </p>
+      <p>
+        <span class="notes-label">D+:</span>
+        <span class="underline-area"></span>
+        &nbsp;&nbsp;&nbsp;
+        <span class="notes-label">D-:</span>
+        <span class="underline-area"></span>
+      </p>
+      <p>
+        <span class="notes-label">NOTES:</span>
+      </p>
+      <p style="height:85px; margin-top:2px;"></p>
+    </div>
+
+    <!-- Manager / daring -->
+    <div class="manager-block">
+      <p>
+        <span class="notes-label">MANAGER:</span>
+        <span class="underline-area" style="min-width:160px;"></span>
+      </p>
+      <p>
+        <span class="notes-label">DARING:</span>
+        <span class="underline-area" style="min-width:120px;"></span>
+      </p>
+    </div>
+  </div>
+    <div class="home scorecard">
+    <!-- Top title and scoreboard -->
+    <div class="header">
+      <h1>DEADBALL</h1>
+      <div class="scorebox">
+        <table>
+          <tr>
+            <th class="label"></th>
+            <th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th>
+            <th>7</th><th>8</th><th>9</th><th>10</th><th>11</th><th>12</th>
+            <th>R</th><th>H</th><th>E</th>
+          </tr>
+          <tr>
+            <td class="label">AWAY:</td>
+            <td></td><td></td><td></td><td></td><td></td><td></td>
+            <td></td><td></td><td></td><td></td><td></td><td></td>
+            <td></td><td></td><td></td>
+          </tr>
+          <tr>
+            <td class="label">HOME:</td>
+            <td></td><td></td><td></td><td></td><td></td><td></td>
+            <td></td><td></td><td></td><td></td><td></td><td></td>
+            <td></td><td></td><td></td>
+          </tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- Team label -->
+    <div class="section-title team-label-row home-team">TEAM: <span class="team-label home-team-name"></span></div>
+
+    <!-- Main lineup table -->
+    <table class="main-table">
+      <thead>
+        <tr>
+          <th class="name">PLAYER NAME</th>
+          <th class="pos">POS</th>
+          <th class="small">L/R</th>
+          <th class="small">BT</th>
+          <th class="small">OBT</th>
+          <th class="traits">TRAITS</th>
+          <th class="inn divider">1</th>
+          <th class="inn">2</th>
+          <th class="inn">3</th>
+          <th class="inn">4</th>
+          <th class="inn">5</th>
+          <th class="inn">6</th>
+          <th class="inn">7</th>
+          <th class="inn">8</th>
+          <th class="inn">9</th>
+          <th class="inn">10</th>
+          <th class="inn">11</th>
+          <th class="inn">12</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- 12 lineup rows -->
+        <!-- You can duplicate/add/remove rows as needed -->
+        <tr>
+          <td class="name"></td>
+          <td class="pos"></td>
+          <td class="small"></td>
+          <td class="small"></td>
+          <td class="small"></td>
+          <td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <!-- copy the row below 11 more times -->
+        <tr>
+          <td class="name"></td>
+          <td class="pos"></td>
+          <td class="small"></td>
+          <td class="small"></td>
+          <td class="small"></td>
+          <td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td>
+          <td class="pos"></td>
+          <td class="small"></td>
+          <td class="small"></td>
+          <td class="small"></td>
+          <td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td><td class="pos"></td><td class="small"></td>
+          <td class="small"></td><td class="small"></td><td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td><td class="pos"></td><td class="small"></td>
+          <td class="small"></td><td class="small"></td><td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td><td class="pos"></td><td class="small"></td>
+          <td class="small"></td><td class="small"></td><td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td><td class="pos"></td><td class="small"></td>
+          <td class="small"></td><td class="small"></td><td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td><td class="pos"></td><td class="small"></td>
+          <td class="small"></td><td class="small"></td><td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td><td class="pos"></td><td class="small"></td>
+          <td class="small"></td><td class="small"></td><td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td><td class="pos"></td><td class="small"></td>
+          <td class="small"></td><td class="small"></td><td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td><td class="pos"></td><td class="small"></td>
+          <td class="small"></td><td class="small"></td><td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+        <tr>
+          <td class="name"></td><td class="pos"></td><td class="small"></td>
+          <td class="small"></td><td class="small"></td><td class="traits"></td>
+          <td class="inn divider"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td><td class="inn"></td><td class="inn"></td>
+          <td class="inn"></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- Bench + Pitchers area -->
+    <div class="flex-row">
+      <!-- Bench -->
+      <div class="flex-col bench">
+        <div class="section-title">BENCH</div>
+        <table class="small-table">
+          <thead>
+            <tr>
+              <th>BENCH</th>
+              <th>POS</th>
+              <th>L/R</th>
+              <th>BT</th>
+              <th>OBT</th>
+              <th>TRAITS</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pitchers -->
+      <div class="flex-col pitchers">
+        <div class="section-title">PITCHERS</div>
+        <table class="small-table">
+          <thead>
+            <tr>
+              <th>IP</th>
+              <th>POS</th>
+              <th>PITCHERS</th>
+              <th>PD</th>
+              <th>L/R</th>
+              <th>BT</th>
+              <th>OBT</th>
+              <th>TRAITS</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- 5 SP rows -->
+            <tr><td></td><td>SP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>SP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>SP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>SP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>SP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <!-- 7 RP rows -->
+            <tr><td></td><td>RP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>RP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>RP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>RP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>RP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>RP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td></td><td>RP</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Notes / traits area -->
+    <div class="notes-block">
+      <p>
+        <span class="notes-label">OPPOSING PITCHER:</span>
+        LHP / RHP
+      </p>
+      <p>
+        <span class="notes-label">PITCH DIE:</span>
+        20&nbsp;&nbsp;12&nbsp;&nbsp;8&nbsp;&nbsp;4&nbsp;&nbsp;-4&nbsp;&nbsp;-8
+      </p>
+      <p>
+        <span class="notes-label">TRAITS:</span>
+        K&nbsp;&nbsp;GB&nbsp;&nbsp;CN&nbsp;&nbsp;ST
+      </p>
+      <p>
+        <span class="notes-label">D+:</span>
+        <span class="underline-area"></span>
+        &nbsp;&nbsp;&nbsp;
+        <span class="notes-label">D-:</span>
+        <span class="underline-area"></span>
+      </p>
+      <p>
+        <span class="notes-label">NOTES:</span>
+      </p>
+      <p style="height:85px; margin-top:2px;"></p>
+    </div>
+
+    <!-- Manager / daring -->
+    <div class="manager-block">
+      <p>
+        <span class="notes-label">MANAGER:</span>
+        <span class="underline-area" style="min-width:160px;"></span>
+      </p>
+      <p>
+        <span class="notes-label">DARING:</span>
+        <span class="underline-area" style="min-width:120px;"></span>
+      </p>
+    </div>
+  </div>
+</body>
+</html>
