@@ -184,7 +184,7 @@ This `overview.md` file serves as the bridge between the two environments.
 - API has health, roster generate with persistence + GET/list, game-by-date list + game generate with caching; generator wired for drop-in Deadball conversion via `deadball_api`
 - Minimal API tests added for rosters/games flows (pytest)
 - Embedded `deadball_generator` package with CLI scaffold for local use
-- Frontend scaffold in place (Vite + React + Tailwind) with placeholder UI
+- Frontend scaffold in place (Vite + React + Tailwind) with basic UI for date → games → generate and roster generation
 - New goal: date → games → generate flow (user picks a date, sees games, picks one, and generates stats/deadball output). Needs real feed + generator integration for game-specific conversion.
 
 ---
