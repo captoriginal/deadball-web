@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -27,8 +27,18 @@ class Roster(BaseModel):
 
 
 class GenerateRequest(BaseModel):
-    mode: str
+    mode: Literal["season", "box_score", "manual"]
     payload: str
+    name: Optional[str] = Field(default=None, description="Optional roster name override")
+    description: Optional[str] = None
+    public: bool = False
+
+
+class RostersResponse(BaseModel):
+    items: List[Roster]
+    count: int
+    offset: int
+    limit: int
 
 
 class GenerateResponse(BaseModel):

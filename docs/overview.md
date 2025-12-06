@@ -18,7 +18,7 @@ This document serves as the source of truth for the project—architecture, tool
 ## 2. Tech Stack
 
 ### Backend
-- Python 3.x
+- Python 3.12.x
 - FastAPI
 - Uvicorn
 - SQLModel / SQLAlchemy
@@ -181,7 +181,9 @@ This `overview.md` file serves as the bridge between the two environments.
 - Project structure defined; documentation set up (`docs/*`)
 - Backend skeleton running (FastAPI app, env-driven settings, DB init)
 - SQLModel models for Roster/Player defined; tables auto-created on startup
-- API has health + stub generate endpoint; persistence wiring is next
+- API has health, stub generate endpoint now persists roster/players, GET by slug, and roster listing with pagination
+- Minimal API tests added for generate/get/list and slug uniqueness (pytest)
+- Embedded `deadball_generator` package with CLI scaffold for local use
 - Frontend scaffold still pending
 
 ---
@@ -197,7 +199,8 @@ This `overview.md` file serves as the bridge between the two environments.
 ### Phase 2 – Backend Core
 - ✅ Implement DB setup (`db.py`) with session helper
 - ✅ Create SQLModel models (Roster, Player)
-- ⏳ Replace `/generate` stub with real logic + persistence
+- ✅ Persist stub `/generate` output, add GET by slug, and list rosters
+- ⏳ Replace stub with real generator logic and add roster listing
 
 ### Phase 3 – Frontend Core
 - Build basic form page
