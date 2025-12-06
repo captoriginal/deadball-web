@@ -8,3 +8,6 @@ env/
 build/
 dist/
 *.db
+
+# macOS
+.DS_Store
