@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import List, Optional
 
 from sqlalchemy import UniqueConstraint
@@ -13,7 +13,7 @@ class Roster(SQLModel, table=True):
     source_type: Optional[str] = Field(default=None, index=True)
     source_ref: Optional[str] = None
     public: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), nullable=False)
 
     players: List["Player"] = Relationship(back_populates="roster")
 
