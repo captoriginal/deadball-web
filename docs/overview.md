@@ -1,222 +1,126 @@
 # Deadball Web — Project Overview
-Deadball Web is a modern, browser-based interface for generating Deadball-compatible rosters from MLB data. The system provides a clean UI, a FastAPI backend that performs data conversion, and a SQLite database for persistence.
 
-This document serves as the source of truth for the project—architecture, tools, decisions, and current status. It links the high-level design work (ChatGPT planning) with the on-the-ground coding work (VS Code + Codex).
+Deadball Web is a browser-based interface for generating Deadball-compatible game scorecards from MLB data. A React/Vite frontend calls a FastAPI backend that fetches MLB boxscores, converts them via the embedded `deadball_generator` tools, and returns both JSON and CSV scorecard data. SQLite caches games, raw boxscores, and generated outputs for reuse.
 
 ---
 
 ## 1. Goals
-- Provide an easy-to-use web interface for generating Deadball rosters.
-- Keep the backend logic fully Python-based (FastAPI + deadball-generator code).
-- Persist generated rosters using SQLite for later retrieval and sharing.
-- Use a modern, flexible, well-documented front-end stack (React + Vite + Tailwind).
-- Maintain everything in a single monorepo to simplify development and deployment.
-- Enable straightforward deployment later (Render for backend, Netlify/Vercel for frontend).
+- Simple date → game list → generate → inline scorecard experience.
+- Pure-Python backend (FastAPI + embedded `deadball_generator`) with no stub fallbacks—errors surface explicitly.
+- Cached storage of raw and generated game artifacts in SQLite.
+- Modern frontend stack (React + Vite + Tailwind) with inline scorecard rendering (no popup).
+- Single monorepo for ease of development and deployment (Render/Netlify or similar later).
 
 ---
 
 ## 2. Tech Stack
 
 ### Backend
-- Python 3.12.x
-- FastAPI
-- Uvicorn
+- Python 3.12.x, FastAPI, Uvicorn
 - SQLModel / SQLAlchemy
 - SQLite
-- deadball-generator (local Python module)
+- Embedded `deadball_generator` (local module) using `deadball_generator.cli.game`
 
 ### Frontend
 - React
 - Vite
 - Tailwind CSS
-- shadcn/ui (optional)
 
-### Development Tools
-- VS Code (primary editor)
-- Codex/Copilot for inline code assistance
-- ChatGPT for planning, architecture, and documentation
-- Git + GitHub for version control
-- Apple Silicon MacBook as the development machine
+### Tooling
+- VS Code + Codex/Copilot
+- ChatGPT for planning/docs
+- Git + GitHub
 
 ---
 
 ## 3. Monorepo Structure
 
-deadball-web/
-├─ backend/
-│  ├─ app/
-│  │  ├─ main.py
-│  │  ├─ api/
-│  │  ├─ core/config.py
-│  │  ├─ models.py
-│  │  ├─ db.py
-│  │  └─ schemas.py
-│  ├─ requirements.txt
-│  ├─ .env.example
-│  └─ deadball_dev.db (created at runtime)
-│
-├─ frontend/
-│  ├─ package.json
-│  ├─ vite.config.js
-│  ├─ tailwind.config.js
-│  └─ src/ (pending)
-│
-└─ docs/
-   ├─ overview.md
-   ├─ architecture.md
-   ├─ api.md
-   ├─ data-model.md
-   └─ roadmap.md
+deadball-web/  
+├─ backend/  
+│  ├─ app/ (FastAPI app, routes, config)  
+│  ├─ deadball_generator/ (embedded generator, CLI helpers)  
+│  ├─ requirements.txt  
+│  └─ .env.example  
+├─ frontend/  
+│  ├─ package.json  
+│  ├─ vite.config.js  
+│  ├─ tailwind.config.js  
+│  └─ src/ (app code)  
+└─ docs/ (this folder)
 
 ---
 
 ## 4. High-Level Architecture
 
-React + Vite frontend  (http://localhost:5173)
-        |
-        | fetch() → JSON
-        ↓
-FastAPI backend        (http://localhost:8000)
-        |
-        ↓
-SQLite (deadball_dev.db)
-        |
-        ↓
-deadball_generator logic (Python module)
+React + Vite frontend (http://localhost:5173)  
+ | fetch() → JSON  
+FastAPI backend (http://localhost:8000, prefix `/api`)  
+ | persists to SQLite (`deadball_dev.db`)  
+ | calls `deadball_generator.cli.game` for conversion  
+Deadball scorecard HTML/CSV returned to frontend
 
-The frontend sends requests to `/generate` and `/rosters/{slug}`.
-The backend validates input, generates rosters, stores them in SQLite, and returns structured JSON.
+Flow: frontend calls `/api/games?date=YYYY-MM-DD` to list games → user clicks Generate → backend fetches boxscore (or uses cached/provided) → converts to Deadball JSON/CSV → frontend renders scorecard inline.
 
 ---
 
-## 5. Data Model (Initial Sketch)
+## 5. Data Model (current)
 
-### Roster
-- id  
-- slug  
-- name  
-- description  
-- created_at  
-- source_type ("season", "box_score", "manual")  
-- source_ref (URL or filename)  
-- public  
+- **Game**: id, game_id (MLB gamePk), game_date, home_team, away_team, description, timestamps  
+- **GameRawStats**: id, game_id (FK → Game), payload (raw boxscore JSON text)  
+- **GameGenerated**: id, game_id (FK → Game), stats (Deadball JSON string), game_text (Deadball CSV string)  
 
-### Player
-- id  
-- roster_id (FK → Roster)  
-- name  
-- team  
-- age  
-- role ("batter", "pitcher", "two_way")  
-- positions (JSON/text)  
-- bt  
-- obt  
-- traits (JSON/text)  
-- pd (nullable)  
+Legacy roster tables/endpoints remain but are secondary to the game flow.
 
 ---
 
-## 6. API Endpoints (Initial Plan)
+## 6. API Endpoints (current)
 
-### POST /generate  
-Input:
-- mode (season, box_score, manual)
-- payload (URL, CSV text, or JSON)
-
-Output:
-- roster metadata
-- list of players (JSON)
-
-Side effect:
-- Saves roster in SQLite
-- Returns roster slug
-
-### GET /rosters/{slug}
-Returns:
-- roster metadata
-- list of players
+- `GET /api/games?date=YYYY-MM-DD` — list games for the date (cached; stub only if no network and nothing cached).  
+- `POST /api/games/{game_id}/generate` — generate Deadball output; returns `{ game, stats (JSON string), game_text (CSV string), cached }`; `force=true` bypasses cached generated output; explicit errors on failure.  
+- Health: `GET /health`  
+- Legacy roster endpoints (`/api/generate`, `/api/rosters`) remain but are not the primary UI flow.
 
 ---
 
-## 7. Local Development Workflow
+## 7. Local Development
 
-### Backend
+Backend  
+```
+python -m venv .venv
+source .venv/bin/activate
+pip install -r backend/requirements.txt
+uvicorn app.main:app --reload --app-dir backend --host 0.0.0.0 --port 8000
+```
+Env: `backend/.env` (see `.env.example`), notably `ALLOW_GENERATOR_NETWORK=true` for boxscore fetches.
 
-python3 -m venv .venv  
-source .venv/bin/activate  
-pip install -r backend/requirements.txt  
-uvicorn app.main:app --reload --app-dir backend  
-
-### Frontend
-
-cd frontend  
-npm install  
-npm run dev  
-
-Ensure `frontend/.env.local` contains:
-
-VITE_API_BASE_URL=http://localhost:8000
+Frontend  
+```
+cd frontend
+npm install
+npm run dev
+```
+Env: `frontend/.env.local` with `VITE_API_BASE_URL=http://localhost:8000`.
 
 ---
 
-## 8. Coordination Between ChatGPT and Codex
+## 8. Coordination
 
-ChatGPT handles:
-- Architecture
-- API and data model design
-- Documentation updates
-- Planning, refactoring ideas, roadmaps
-
-Codex / VS Code handles:
-- Inline coding and implementation
-- Autocompletion
-- Small refactors
-- Applying TODOs directly in files
-
-This `overview.md` file serves as the bridge between the two environments.
+ChatGPT: architecture, API/data design, documentation, planning/roadmaps.  
+Codex/VS Code: implementation, refactors, TODOs.
 
 ---
 
 ## 9. Current Status
-- Project structure defined; documentation set up (`docs/*`)
-- Backend skeleton running (FastAPI app, env-driven settings, DB init)
-- SQLModel models for Roster/Player + Game caching defined; tables auto-created on startup
-- API has health, roster generate with persistence + GET/list, game-by-date list + game generate with caching; generator wired for drop-in Deadball conversion via `deadball_api`
-- Minimal API tests added for rosters/games flows (pytest)
-- Embedded `deadball_generator` package with CLI scaffold for local use
-- Frontend scaffold in place (Vite + React + Tailwind) with basic UI for date → games → generate and roster generation
-- Backend env toggle: `ALLOW_GENERATOR_NETWORK` controls whether generator can fetch data over the network
-- New goal: date → games → generate flow (user picks a date, sees games, picks one, and generates stats/deadball output). Needs real feed + generator integration for game-specific conversion.
+- Backend game list + generate endpoints live; conversion uses `deadball_generator.cli.game` and produces Deadball JSON/CSV. No stub fallbacks; errors are explicit.  
+- SQLite caching for games, raw stats, generated outputs; force refresh supported.  
+- Frontend provides date → games → generate flow with inline scorecard rendering.  
+- Traits normalization and HTML scorecard templating wired end-to-end.  
+- `ALLOW_GENERATOR_NETWORK` gates boxscore fetch; if disabled and uncached, a 503 is returned.
 
 ---
 
-## 10. Roadmap (Initial)
-
-### Phase 1 – Scaffolding
-- ✅ Create monorepo directories
-- ✅ Add backend FastAPI skeleton + env/config wiring
-- ✅ Add frontend Vite + React skeleton
-- ✅ Configure Tailwind
-
-### Phase 2 – Backend Core
-- ✅ Implement DB setup (`db.py`) with session helper
-- ✅ Create SQLModel models (Roster, Player)
-- ✅ Persist stub `/generate` output, add GET by slug, and list rosters
-- ✅ Add game-by-date flow: `GET /api/games?date=YYYY-MM-DD`, `POST /api/games/{game_id}/generate` with caching
-- ✅ Roster listing sorted by newest first; pagination supported
-- ✅ Wire generator to deadball API surface for rosters/games (ready for real logic drop-in)
-
-### Phase 3 – Frontend Core
-- Build date picker → games list UI
-- Trigger `/api/games/{game_id}/generate` and display generated stats/deadball game; allow viewing cached results if already generated
-
-### Phase 4 – Persistence
-- Save roster and players into SQLite
-- Add `/rosters/{slug}`
-- Add frontend roster detail page
-
-### Phase 5 – Polish & Docs
-- Improve error handling
-- Style UI using Tailwind/shadcn
-- Update docs
-- Add tests where needed
+## 10. Roadmap (snapshot)
+- Harden game conversion fidelity; add tests around `/api/games/{id}/generate`.  
+- Polish scorecard preview UX and error/loading states.  
+- Document deployment steps and production settings.  
+- Optional: de-emphasize legacy roster UI; keep backend roster endpoints documented but secondary.
