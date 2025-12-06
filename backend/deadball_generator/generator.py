@@ -72,3 +72,25 @@ def generate_roster(
         public=public,
         players=players,
     )
+
+
+def generate_game_from_raw(
+    *,
+    game_id: str,
+    date: str,
+    home_team: str | None,
+    away_team: str | None,
+    raw_stats: str,
+) -> dict:
+    """
+    Stub conversion for a single game; replace with real transformation.
+
+    Returns a dict with keys:
+    - stats: JSON/text for deadball stats
+    - game_text: serialized deadball game representation
+    """
+    stats_text = f"deadball-stats for {game_id} ({home_team} vs {away_team}) on {date}"
+    return {
+        "stats": f"{stats_text} | raw={raw_stats}",
+        "game_text": f"deadball-game-file for {game_id}",
+    }

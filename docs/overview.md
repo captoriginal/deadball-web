@@ -180,11 +180,12 @@ This `overview.md` file serves as the bridge between the two environments.
 ## 9. Current Status
 - Project structure defined; documentation set up (`docs/*`)
 - Backend skeleton running (FastAPI app, env-driven settings, DB init)
-- SQLModel models for Roster/Player defined; tables auto-created on startup
-- API has health, stub generate endpoint now persists roster/players, GET by slug, and roster listing with pagination
-- Minimal API tests added for generate/get/list and slug uniqueness (pytest)
+- SQLModel models for Roster/Player + Game caching defined; tables auto-created on startup
+- API has health, roster generate with persistence + GET/list, game-by-date list + game generate with caching
+- Minimal API tests added for rosters/games flows (pytest)
 - Embedded `deadball_generator` package with CLI scaffold for local use
-- Frontend scaffold still pending
+- Frontend scaffold in place (Vite + React + Tailwind) with placeholder UI
+- New goal: date → games → generate flow (user picks a date, sees games, picks one, and generates stats/deadball output). Needs real feed + generator integration for game-specific conversion.
 
 ---
 
@@ -193,19 +194,20 @@ This `overview.md` file serves as the bridge between the two environments.
 ### Phase 1 – Scaffolding
 - ✅ Create monorepo directories
 - ✅ Add backend FastAPI skeleton + env/config wiring
-- ⏳ Add frontend Vite + React skeleton
-- ⏳ Configure Tailwind
+- ✅ Add frontend Vite + React skeleton
+- ✅ Configure Tailwind
 
 ### Phase 2 – Backend Core
 - ✅ Implement DB setup (`db.py`) with session helper
 - ✅ Create SQLModel models (Roster, Player)
 - ✅ Persist stub `/generate` output, add GET by slug, and list rosters
-- ⏳ Replace stub with real generator logic and add roster listing
+- ✅ Add game-by-date flow: `GET /api/games?date=YYYY-MM-DD`, `POST /api/games/{game_id}/generate` with caching
+- ✅ Roster listing sorted by newest first; pagination supported
+- ⏳ Replace stubs with real generator logic (rosters + games)
 
 ### Phase 3 – Frontend Core
-- Build basic form page
-- Call `/generate`
-- Display results
+- Build date picker → games list UI
+- Trigger `/api/games/{game_id}/generate` and display generated stats/deadball game; allow viewing cached results if already generated
 
 ### Phase 4 – Persistence
 - Save roster and players into SQLite
