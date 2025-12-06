@@ -1,5 +1,5 @@
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Iterable, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -267,7 +267,7 @@ def generate_game(
     if not game:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Game not found; list games first")
 
-    # Check cache
+    # Check generated cache
     cached_generated = session.exec(select(models.GameGenerated).where(models.GameGenerated.game_id == game.id)).first()
     if cached_generated and not request.force:
         return GameGenerateResponse(
@@ -277,8 +277,22 @@ def generate_game(
             cached=True,
         )
 
-    # Use provided payload or stub raw stats
-    raw_payload = request.payload or f"raw-stats-for-{game_id}"
+    # Determine raw stats: use provided payload, existing raw cache, or stub
+    raw_stats_row = session.exec(select(models.GameRawStats).where(models.GameRawStats.game_id == game.id)).first()
+    if request.payload:
+        if raw_stats_row:
+            session.delete(raw_stats_row)
+            session.commit()
+        raw_payload = request.payload
+        raw_stats_row = models.GameRawStats(game_id=game.id, payload=raw_payload)
+        session.add(raw_stats_row)
+        session.commit()
+    elif not raw_stats_row:
+        raw_stats_row = models.GameRawStats(game_id=game.id, payload=f"raw-stats-for-{game_id}")
+        session.add(raw_stats_row)
+        session.commit()
+
+    raw_payload = raw_stats_row.payload
 
     generated = generate_game_from_raw(
         game_id=game.game_id,
@@ -298,6 +312,8 @@ def generate_game(
         game_text=generated["game_text"],
     )
     session.add(generated_row)
+    game.updated_at = datetime.now(UTC)
+    session.add(game)
     session.commit()
     session.refresh(game)
 
