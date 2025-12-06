@@ -1,0 +1,106 @@
+# deadball-generator
+
+A collection of Python scripts and tools for generating **Deadball** baseball statistics, scorecards, and game data.  
+This project uses a modern Python workflow with an isolated local virtual environment (`.venv`) and a `requirements.txt` file so it runs cleanly on multiple machines.
+
+## Project Structure
+
+```
+deadball-generator/
+    .venv/                      # local virtual environment (ignored by git)
+    src/deadball_generator/     # package modules and CLI entrypoints
+    assets/templates/           # HTML templates (deadball_scorecard.html)
+    data/
+      raw/                      # optional inputs
+      generated/
+        stats/                  # Fangraphs/BBRef stat pulls
+        season/                 # season/postseason deadball CSVs
+        games/                  # single-game deadball CSVs and filled scorecards
+    scripts/                    # thin wrappers for running the tools directly
+    archive/                    # old scripts and references
+    requirements.txt
+    requirements-dev.txt
+    pyproject.toml
+    README.md
+```
+
+## Environment Setup
+
+### Create and activate the environment
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+### Install dependencies
+
+```bash
+pip install -r requirements.txt
+pip install -e .
+```
+
+### Update dependency list
+
+```bash
+pip freeze > requirements.txt
+```
+
+## Running the Tools
+
+Run any script from within the activated virtual environment:
+
+```bash
+# Package subcommands (preferred)
+python -m deadball_generator --help
+python -m deadball_generator build-team-stats --team LAD --season 2025
+python -m deadball_generator game --date 2025-10-31 --team TOR
+python -m deadball_generator fill-scorecard data/generated/games/tor_2025-10-31_deadball_game.csv
+python -m deadball_generator teams  # list MLB team names/abbreviations
+# Optional: throttle network calls or avoid auto-fetching missing season files
+python -m deadball_generator game --date 2025-10-31 --team TOR --rate-limit-seconds 1.0 --no-fetch
+# Offline parsing from saved boxscore HTML
+python -m deadball_generator game --date 2025-10-31 --team TOR --box-file /path/to/boxscore.html --no-fetch
+# Caching controls
+python -m deadball_generator build-team-stats --team LAD --season 2025 --refresh  # force refetch stats even if cached
+python -m deadball_generator game --date 2025-10-31 --team TOR --refresh  # re-download boxscore data + refresh stats
+# Postseason builds use MLB Stats API (boxscores) for team/player totals; Fangraphs covers regular season.
+
+# Installed console scripts (after `pip install -e .`)
+deadball --help
+deadball build-team-stats --team LAD --season 2025
+deadball game --date 2025-10-31 --team TOR
+deadball fill-scorecard data/generated/games/tor_2025-10-31_deadball_game.csv
+deadball_generator teams  # invoke via console script instead of python -m
+
+# Or call the thin script wrappers
+python scripts/build_team_stats.py --team LAD --season 2025
+python scripts/game.py --date 2025-10-31 --team TOR
+python scripts/fill_scorecard.py data/generated/games/tor_2025-10-31_deadball_game.csv
+```
+
+## Tests
+
+```bash
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+PYTHONPATH=src pytest
+```
+
+## Updating the Project
+
+```bash
+git add .
+git commit -m "Describe your changes here"
+git push
+```
+
+## Set Up on Another Machine
+
+```bash
+git clone git@github.com:captoriginal/deadball-generator.git
+cd deadball-generator
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```

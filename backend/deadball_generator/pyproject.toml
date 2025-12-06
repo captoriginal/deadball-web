@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deadball-generator"
+version = "0.1.0"
+description = "Python tools for generating Deadball baseball stats, games, and scorecards."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas",
+    "requests",
+    "beautifulsoup4",
+    "lxml",
+    "pybaseball",
+]
+
+[project.scripts]
+deadball-build-stats = "deadball_generator.stats_fetchers.team_stats:main"
+deadball-game = "deadball_generator.cli.game:main"
+deadball-fill-scorecard = "deadball_generator.scorecards.fill:main"
+deadball = "deadball_generator.cli.main:main"
+deadball_generator = "deadball_generator.cli.main:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
