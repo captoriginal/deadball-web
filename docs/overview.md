@@ -181,7 +181,7 @@ This `overview.md` file serves as the bridge between the two environments.
 - Project structure defined; documentation set up (`docs/*`)
 - Backend skeleton running (FastAPI app, env-driven settings, DB init)
 - SQLModel models for Roster/Player + Game caching defined; tables auto-created on startup
-- API has health, roster generate with persistence + GET/list, game-by-date list + game generate with caching
+- API has health, roster generate with persistence + GET/list, game-by-date list + game generate with caching; generator wired for drop-in Deadball conversion via `deadball_api`
 - Minimal API tests added for rosters/games flows (pytest)
 - Embedded `deadball_generator` package with CLI scaffold for local use
 - Frontend scaffold in place (Vite + React + Tailwind) with placeholder UI
@@ -203,7 +203,7 @@ This `overview.md` file serves as the bridge between the two environments.
 - ✅ Persist stub `/generate` output, add GET by slug, and list rosters
 - ✅ Add game-by-date flow: `GET /api/games?date=YYYY-MM-DD`, `POST /api/games/{game_id}/generate` with caching
 - ✅ Roster listing sorted by newest first; pagination supported
-- ⏳ Replace stubs with real generator logic (rosters + games)
+- ✅ Wire generator to deadball API surface for rosters/games (ready for real logic drop-in)
 
 ### Phase 3 – Frontend Core
 - Build date picker → games list UI
