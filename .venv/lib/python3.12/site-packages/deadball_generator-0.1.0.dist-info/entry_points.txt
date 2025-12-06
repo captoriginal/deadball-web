@@ -1,0 +1,6 @@
+[console_scripts]
+deadball = deadball_generator.cli.main:main
+deadball-build-stats = deadball_generator.stats_fetchers.team_stats:main
+deadball-fill-scorecard = deadball_generator.scorecards.fill:main
+deadball-game = deadball_generator.cli.game:main
+deadball_generator = deadball_generator.cli.main:main

@@ -1,14 +1,17 @@
+# Python
 .venv/
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-.Python
-env/
-.env
-build/
-dist/
-*.db
 
-# macOS
+# Node / frontend
+node_modules/
+dist/
+frontend/.env.local
+
+# Backend env + DB
+backend/.env
+deadball_dev.db
+
+# OS/editor cruft
 .DS_Store
+.vscode/
