@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import csv
 import html
+import json
 from pathlib import Path
 from typing import Iterable, List, Mapping, MutableMapping, Sequence
 
@@ -65,6 +66,45 @@ def read_hitters_by_team(csv_path: Path) -> dict[str, list[MutableMapping[str, s
     for team_rows in hitters.values():
         team_rows.sort(key=order_key)
     return hitters, pitchers
+
+
+def _fmt_traits(val: str | Iterable[str] | None) -> str:
+    """
+    Traits sometimes arrive as JSON (e.g., '["GB", "K"]') or a Python-list repr.
+    Normalize to a space-separated string for display.
+    """
+    if val is None:
+        return ""
+
+    # Already a collection
+    if isinstance(val, (list, tuple, set)):
+        items = list(val)
+    else:
+        text = str(val).strip()
+        # Strip one level of wrapping quotes if present (e.g., "\"[\\\"GB\\\", \\\"K\\\"]\"")
+        if (text.startswith('"') and text.endswith('"')) or (text.startswith("'") and text.endswith("'")):
+            text = text[1:-1]
+            text = text.strip()
+        if not text:
+            return ""
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            parsed = None
+
+        if isinstance(parsed, (list, tuple, set)):
+            items = list(parsed)
+        elif isinstance(parsed, dict):
+            items = [f"{k}:{v}" for k, v in parsed.items()]
+        else:
+            # Handle Python repr strings like "['GB', 'K']"
+            if text.startswith("[") and text.endswith("]"):
+                inner = text[1:-1]
+                items = [seg.strip(" '\"") for seg in inner.split(",") if seg.strip(" '\"")]
+            else:
+                return text
+
+    return " ".join(str(item).strip() for item in items if str(item).strip())
 
 
 def split_lineup_and_bench(hitters: Sequence[Mapping[str, str]]) -> tuple[list[Mapping[str, str]], list[Mapping[str, str]]]:
@@ -141,7 +181,7 @@ def build_lineup_rows(hitters: Sequence[Mapping[str, str]]) -> str:
         lr = html.escape(hitter.get("LR", "") or hitter.get("Hand", "") or "")
         bt = html.escape(_fmt_number(hitter.get("BT")))
         obt = html.escape(_fmt_number(hitter.get("OBT")))
-        traits = html.escape(hitter.get("Traits", "") or "")
+        traits = html.escape(_fmt_traits(hitter.get("Traits")))
 
         row_lines.append("        <tr>")
         row_lines.append(f"          <td class=\"name\">{name}</td>")
@@ -167,7 +207,7 @@ def build_bench_rows(hitters: Sequence[Mapping[str, str]]) -> str:
         lr = html.escape(hitter.get("LR", "") or hitter.get("Hand", "") or "")
         bt = html.escape(_fmt_number(hitter.get("BT")))
         obt = html.escape(_fmt_number(hitter.get("OBT")))
-        traits = html.escape(hitter.get("Traits", "") or "")
+        traits = html.escape(_fmt_traits(hitter.get("Traits")))
         rows.append("            <tr>")
         rows.append(f"              <td>{name}</td>")
         rows.append(f"              <td>{pos}</td>")
@@ -188,7 +228,7 @@ def build_pitcher_rows(pitchers: Sequence[Mapping[str, str]], label: str) -> str
         lr = html.escape(p.get("Throws", "") or p.get("Hand", "") or "")
         bt = html.escape(_fmt_number(p.get("BT")))
         obt = html.escape(_fmt_number(p.get("OBT")))
-        traits = html.escape(p.get("Traits", "") or "")
+        traits = html.escape(_fmt_traits(p.get("Traits")))
         ip = ""  # leave IP blank in the scorecard pitcher table
         rows.append("            <tr>")
         rows.append(f"              <td>{ip}</td>")

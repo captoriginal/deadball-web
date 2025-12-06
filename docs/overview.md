@@ -185,6 +185,7 @@ This `overview.md` file serves as the bridge between the two environments.
 - Minimal API tests added for rosters/games flows (pytest)
 - Embedded `deadball_generator` package with CLI scaffold for local use
 - Frontend scaffold in place (Vite + React + Tailwind) with basic UI for date → games → generate and roster generation
+- Backend env toggle: `ALLOW_GENERATOR_NETWORK` controls whether generator can fetch data over the network
 - New goal: date → games → generate flow (user picks a date, sees games, picks one, and generates stats/deadball output). Needs real feed + generator integration for game-specific conversion.
 
 ---

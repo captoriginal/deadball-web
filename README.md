@@ -12,6 +12,11 @@ source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
+- Env knobs:
+  - `DATABASE_URL` (default sqlite)
+  - `API_PREFIX` (default `/api`)
+  - `CORS_ORIGINS` (comma-separated; default `http://localhost:5173`)
+  - `ALLOW_GENERATOR_NETWORK` (default `true`)
 
 ### Frontend
 ```

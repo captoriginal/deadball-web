@@ -16,22 +16,32 @@ from typing import Any, Dict, List
 import pandas as pd
 
 from deadball_generator.cli.game import build_deadball_for_game
+from deadball_generator.cli.game import team_code_from_name
+from deadball_generator.roster_api import convert_roster_from_payload, convert_roster_from_season
 
 
 def convert_roster(mode: str, payload: str) -> Dict[str, Any]:
     """
     Convert a roster payload into Deadball-friendly structures.
 
-    Currently a passthrough stub until a roster conversion API is exposed.
-    Expected return shape:
-    {
-      "players": [
-        {"name": ..., "team": ..., "role": ..., "positions": [...], "bt": ..., "obt": ..., "traits": [...], "pd": ...},
-        ...
-      ],
-      "meta": {"description": "...", ...}
-    }
+    Modes:
+    - season: payload should be a JSON string like {"team": "LAD", "season": 2023}
+    - box_score/manual: attempts to parse payload as JSON with players[]
+    - otherwise falls back to stub
     """
+    if mode == "season":
+        try:
+            data = json.loads(payload)
+            team = data.get("team")
+            season = int(data.get("season"))
+            if team and season:
+                return convert_roster_from_season(team, season, allow_network=True)
+        except Exception:
+            pass
+    # Fallback to payload-parsed roster
+    parsed = convert_roster_from_payload(payload)
+    if parsed["players"]:
+        return parsed
     return {
         "players": [],
         "meta": {"description": f"Converted {mode} payload", "source_ref": payload},
@@ -60,46 +70,34 @@ def convert_game(
     """
     try:
         parsed = json.loads(raw_stats)
-    except json.JSONDecodeError:
-        parsed = None
-
-    if parsed is None:
-        return {
-            "stats": f"deadball-stats for {game_id} | raw={raw_stats}",
-            "game_text": f"deadball-game-file for {game_id}",
-        }
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Could not parse raw stats JSON for game {game_id}: {exc}") from exc
 
     if not game_date:
-        raise ValueError("game_date is required for conversion")
-    team_code = home_team or away_team
-    if not team_code:
-        raise ValueError("home_team or away_team is required for conversion")
+        raise ValueError(f"Missing game_date for game {game_id}; cannot convert.")
+
+    team_code = home_team or away_team or "TEAM"
+    team_code = team_code_from_name(team_code)
 
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tmp:
         json.dump(parsed, tmp)
         tmp.flush()
         tmp_path = tmp.name
 
-    try:
-        df, team_labels = build_deadball_for_game(
-            date=game_date,
-            team=team_code,
-            box_file=tmp_path,
-            postseason=False,
-            auto_postseason=True,
-            rate_limit_seconds=0.0,
-            no_fetch=not allow_network,
-            refresh=False,
-        )
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            raise ValueError("No rows returned from generator")
+    df, team_labels = build_deadball_for_game(
+        date=game_date,
+        team=team_code,
+        box_file=tmp_path,
+        postseason=False,
+        auto_postseason=True,
+        rate_limit_seconds=0.0,
+        no_fetch=not allow_network,
+        refresh=False,
+    )
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        raise ValueError(f"Deadball generator returned no rows for game {game_id}")
 
-        records = df.fillna("").to_dict(orient="records")
-        stats_json = json.dumps({"players": records, "teams": team_labels})
-        game_csv = df.to_csv(index=False)
-        return {"stats": stats_json, "game_text": game_csv}
-    except Exception:
-        return {
-            "stats": f"deadball-stats for {game_id} | raw={raw_stats}",
-            "game_text": f"deadball-game-file for {game_id}",
-        }
+    records = df.fillna("").to_dict(orient="records")
+    stats_json = json.dumps({"players": records, "teams": team_labels})
+    game_csv = df.to_csv(index=False)
+    return {"stats": stats_json, "game_text": game_csv}

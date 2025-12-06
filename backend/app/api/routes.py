@@ -1,6 +1,8 @@
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Iterable, List
+
+import requests
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
@@ -8,6 +10,7 @@ from sqlmodel import Session, select
 
 from app import models
 from app.db import get_session
+from app.core.config import get_settings
 from app.schemas import (
     Game,
     GameGenerateRequest,
@@ -25,6 +28,7 @@ from deadball_generator.generator import (
 )
 
 router = APIRouter()
+settings = get_settings()
 
 
 def _slugify(value: str) -> str:
@@ -74,6 +78,13 @@ def _serialize_players(records: Iterable[models.Player]) -> List[Player]:
         )
         for player in records
     ]
+
+
+def _is_stale(updated_at: datetime, ttl_hours: int) -> bool:
+    now = datetime.now(UTC)
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=UTC)
+    return now - updated_at > timedelta(hours=ttl_hours)
 
 
 def _store_str_list(values: List[str] | None) -> str | None:
@@ -199,6 +210,20 @@ def _serialize_game(game: models.Game) -> Game:
     )
 
 
+def _extract_team_name(team_payload: dict | None) -> str | None:
+    """
+    The schedule endpoint returns only id/name/link; older code tried abbreviation and got None.
+    Prefer abbreviation if present, then teamCode, then name.
+    """
+    if not team_payload:
+        return None
+    return (
+        team_payload.get("abbreviation")
+        or team_payload.get("teamCode")
+        or team_payload.get("name")
+    )
+
+
 def _get_or_create_game(session: Session, game_id: str, game_date: datetime, home: str | None, away: str | None, desc: str | None):
     game = session.exec(select(models.Game).where(models.Game.game_id == game_id)).first()
     if game:
@@ -219,18 +244,67 @@ def _get_or_create_game(session: Session, game_id: str, game_date: datetime, hom
 @router.get("/games", response_model=GameListResponse, tags=["games"])
 def list_games(
     date: str = Query(..., description="YYYY-MM-DD"),
+    force: bool = Query(False, description="Force refresh of cached games"),
+    cache_ttl_hours: int = Query(24, ge=1, le=168, description="TTL for cached games"),
     session: Session = Depends(get_session),
 ) -> GameListResponse:
-    """Stub game list; replace with real feed lookup + caching."""
+    """List games by date with caching; falls back to stub if network is unavailable."""
     try:
         parsed_date = datetime.fromisoformat(date).date()
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date format")
 
     games = session.exec(select(models.Game).where(models.Game.game_date == parsed_date)).all()
-    cached = len(games) > 0
+    cached = len(games) > 0 and not force
+
+    use_cache = False
+    if games and not force:
+        fresh = all(not _is_stale(g.updated_at, cache_ttl_hours) for g in games)
+        missing_teams = any(not g.home_team or not g.away_team for g in games)
+        # If any cached game is missing team names and we can reach the network, treat cache as stale.
+        if fresh and not missing_teams:
+            use_cache = True
+
+    if not use_cache and settings.allow_generator_network:
+        try:
+            url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={date}"
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            dates = data.get("dates") or []
+            schedule_games = dates[0].get("games") if dates else []
+            if schedule_games:
+                # Replace existing games for this date
+                for g in schedule_games:
+                    game_pk = g.get("gamePk")
+                    home_abbr = _extract_team_name(g.get("teams", {}).get("home", {}).get("team"))
+                    away_abbr = _extract_team_name(g.get("teams", {}).get("away", {}).get("team"))
+                    desc = g.get("description") or g.get("seriesDescription")
+                    game = session.exec(select(models.Game).where(models.Game.game_id == str(game_pk))).first()
+                    if not game:
+                        game = models.Game(
+                            game_id=str(game_pk),
+                            game_date=parsed_date,
+                            home_team=home_abbr,
+                            away_team=away_abbr,
+                            description=desc,
+                        )
+                        session.add(game)
+                    else:
+                        game.game_date = parsed_date
+                        game.home_team = home_abbr
+                        game.away_team = away_abbr
+                        game.description = desc
+                        game.updated_at = datetime.now(UTC)
+                        session.add(game)
+                session.commit()
+                games = session.exec(select(models.Game).where(models.Game.game_date == parsed_date)).all()
+                cached = False
+        except Exception:
+            pass
+
     if not games:
-        # stub data to mimic an external feed
+        # stub fallback
         stub_games = [
             dict(game_id=f"game-{date}-1", home_team="HOME", away_team="AWAY", description="Stub Game 1"),
             dict(game_id=f"game-{date}-2", home_team="HOME2", away_team="AWAY2", description="Stub Game 2"),
@@ -270,14 +344,23 @@ def generate_game(
     # Check generated cache
     cached_generated = session.exec(select(models.GameGenerated).where(models.GameGenerated.game_id == game.id)).first()
     if cached_generated and not request.force:
-        return GameGenerateResponse(
-            game=_serialize_game(game),
-            stats=cached_generated.stats,
-            game_text=cached_generated.game_text,
-            cached=True,
-        )
+        cache_valid = True
+        try:
+            parsed_cache = json.loads(cached_generated.stats)
+            players = parsed_cache.get("players") if isinstance(parsed_cache, dict) else None
+            if not players or len(players) == 0:
+                cache_valid = False
+        except Exception:
+            cache_valid = False
+        if cache_valid:
+            return GameGenerateResponse(
+                game=_serialize_game(game),
+                stats=cached_generated.stats,
+                game_text=cached_generated.game_text,
+                cached=True,
+            )
 
-    # Determine raw stats: use provided payload, existing raw cache, or stub
+    # Determine raw stats: use provided payload, existing raw cache, or fetch
     raw_stats_row = session.exec(select(models.GameRawStats).where(models.GameRawStats.game_id == game.id)).first()
     if request.payload:
         if raw_stats_row:
@@ -288,19 +371,77 @@ def generate_game(
         session.add(raw_stats_row)
         session.commit()
     elif not raw_stats_row:
-        raw_stats_row = models.GameRawStats(game_id=game.id, payload=f"raw-stats-for-{game_id}")
-        session.add(raw_stats_row)
-        session.commit()
+        if settings.allow_generator_network:
+            try:
+                url = f"https://statsapi.mlb.com/api/v1/game/{game.game_id}/boxscore"
+                resp = requests.get(url, timeout=10)
+                resp.raise_for_status()
+                raw_stats_row = models.GameRawStats(game_id=game.id, payload=resp.text)
+                session.add(raw_stats_row)
+                session.commit()
+            except Exception as exc:
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to fetch boxscore: {exc}") from exc
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Network disabled and no cached raw stats available for this game.",
+            )
 
     raw_payload = raw_stats_row.payload
 
-    generated = generate_game_from_raw(
-        game_id=game.game_id,
-        date=str(game.game_date),
-        home_team=game.home_team,
-        away_team=game.away_team,
-        raw_stats=raw_payload,
-    )
+    # If cached payload is non-JSON and we allow network, try refetching the real boxscore; otherwise fail.
+    if settings.allow_generator_network:
+        try:
+            import json
+
+            json.loads(raw_payload)
+        except Exception:
+            try:
+                url = f"https://statsapi.mlb.com/api/v1/game/{game.game_id}/boxscore"
+                resp = requests.get(url, timeout=10)
+                resp.raise_for_status()
+                raw_payload = resp.text
+                raw_stats_row.payload = raw_payload
+                session.add(raw_stats_row)
+                session.commit()
+            except Exception as exc:
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to refresh boxscore: {exc}") from exc
+
+    # Backfill missing team names from raw payload if we can parse JSON
+    if (not game.home_team or not game.away_team) and raw_payload:
+        try:
+            import json
+
+            payload_json = json.loads(raw_payload)
+            teams = payload_json.get("teams", {})
+            home = _extract_team_name(teams.get("home", {}).get("team"))
+            away = _extract_team_name(teams.get("away", {}).get("team"))
+            updated = False
+            if home and not game.home_team:
+                game.home_team = home
+                updated = True
+            if away and not game.away_team:
+                game.away_team = away
+                updated = True
+            if updated:
+                game.updated_at = datetime.now(UTC)
+                session.add(game)
+                session.commit()
+                session.refresh(game)
+        except Exception:
+            pass
+
+    try:
+        generated = generate_game_from_raw(
+            game_id=game.game_id,
+            date=str(game.game_date),
+            home_team=game.home_team,
+            away_team=game.away_team,
+            raw_stats=raw_payload,
+            allow_network=settings.allow_generator_network,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to generate game stats: {exc}") from exc
 
     if cached_generated:
         session.delete(cached_generated)
