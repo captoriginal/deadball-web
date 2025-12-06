@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 from typing import Iterable, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -7,8 +8,21 @@ from sqlmodel import Session, select
 
 from app import models
 from app.db import get_session
-from app.schemas import GenerateRequest, GenerateResponse, Player, Roster, RostersResponse
-from deadball_generator.generator import generate_roster as generate_deadball_roster
+from app.schemas import (
+    Game,
+    GameGenerateRequest,
+    GameGenerateResponse,
+    GameListResponse,
+    GenerateRequest,
+    GenerateResponse,
+    Player,
+    Roster,
+    RostersResponse,
+)
+from deadball_generator.generator import (
+    generate_game_from_raw,
+    generate_roster as generate_deadball_roster,
+)
 
 router = APIRouter()
 
@@ -158,10 +172,138 @@ def list_rosters(
     session: Session = Depends(get_session),
 ) -> RostersResponse:
     total = session.exec(select(func.count()).select_from(models.Roster)).one()
-    rosters = session.exec(select(models.Roster).offset(offset).limit(limit)).all()
+    rosters = session.exec(
+        select(models.Roster)
+        .order_by(models.Roster.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    ).all()
     return RostersResponse(
         items=[_serialize_roster(r) for r in rosters],
         count=total,
         offset=offset,
         limit=limit,
+    )
+
+
+def _serialize_game(game: models.Game) -> Game:
+    return Game(
+        id=game.id,
+        game_id=game.game_id,
+        game_date=game.game_date,
+        home_team=game.home_team,
+        away_team=game.away_team,
+        description=game.description,
+        created_at=game.created_at,
+        updated_at=game.updated_at,
+    )
+
+
+def _get_or_create_game(session: Session, game_id: str, game_date: datetime, home: str | None, away: str | None, desc: str | None):
+    game = session.exec(select(models.Game).where(models.Game.game_id == game_id)).first()
+    if game:
+        return game
+    game = models.Game(
+        game_id=game_id,
+        game_date=game_date,
+        home_team=home,
+        away_team=away,
+        description=desc,
+    )
+    session.add(game)
+    session.commit()
+    session.refresh(game)
+    return game
+
+
+@router.get("/games", response_model=GameListResponse, tags=["games"])
+def list_games(
+    date: str = Query(..., description="YYYY-MM-DD"),
+    session: Session = Depends(get_session),
+) -> GameListResponse:
+    """Stub game list; replace with real feed lookup + caching."""
+    try:
+        parsed_date = datetime.fromisoformat(date).date()
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date format")
+
+    games = session.exec(select(models.Game).where(models.Game.game_date == parsed_date)).all()
+    cached = len(games) > 0
+    if not games:
+        # stub data to mimic an external feed
+        stub_games = [
+            dict(game_id=f"game-{date}-1", home_team="HOME", away_team="AWAY", description="Stub Game 1"),
+            dict(game_id=f"game-{date}-2", home_team="HOME2", away_team="AWAY2", description="Stub Game 2"),
+        ]
+        for g in stub_games:
+            game = models.Game(
+                game_id=g["game_id"],
+                game_date=parsed_date,
+                home_team=g["home_team"],
+                away_team=g["away_team"],
+                description=g["description"],
+            )
+            session.add(game)
+        session.commit()
+        games = session.exec(select(models.Game).where(models.Game.game_date == parsed_date)).all()
+        cached = False
+
+    return GameListResponse(
+        items=[_serialize_game(g) for g in games],
+        count=len(games),
+        date=date,
+        cached=cached,
+    )
+
+
+@router.post("/games/{game_id}/generate", response_model=GameGenerateResponse, tags=["games"])
+def generate_game(
+    game_id: str,
+    request: GameGenerateRequest,
+    session: Session = Depends(get_session),
+) -> GameGenerateResponse:
+    """Generate deadball stats/game for a single game; uses cache unless forced."""
+    game = session.exec(select(models.Game).where(models.Game.game_id == game_id)).first()
+    if not game:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Game not found; list games first")
+
+    # Check cache
+    cached_generated = session.exec(select(models.GameGenerated).where(models.GameGenerated.game_id == game.id)).first()
+    if cached_generated and not request.force:
+        return GameGenerateResponse(
+            game=_serialize_game(game),
+            stats=cached_generated.stats,
+            game_text=cached_generated.game_text,
+            cached=True,
+        )
+
+    # Use provided payload or stub raw stats
+    raw_payload = request.payload or f"raw-stats-for-{game_id}"
+
+    generated = generate_game_from_raw(
+        game_id=game.game_id,
+        date=str(game.game_date),
+        home_team=game.home_team,
+        away_team=game.away_team,
+        raw_stats=raw_payload,
+    )
+
+    if cached_generated:
+        session.delete(cached_generated)
+        session.commit()
+
+    generated_row = models.GameGenerated(
+        game_id=game.id,
+        stats=generated["stats"],
+        game_text=generated["game_text"],
+    )
+    session.add(generated_row)
+    session.commit()
+    session.refresh(game)
+
+    return GameGenerateResponse(
+        game=_serialize_game(game),
+        stats=generated_row.stats,
+        game_text=generated_row.game_text,
+        cached=False,
     )

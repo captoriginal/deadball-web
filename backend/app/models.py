@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import List, Optional
 
 from sqlalchemy import UniqueConstraint
@@ -33,3 +33,38 @@ class Player(SQLModel, table=True):
     pd: Optional[str] = Field(default=None, description="Pitching defense or similar")
 
     roster: Optional[Roster] = Relationship(back_populates="players")
+
+
+class Game(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    game_id: str = Field(index=True, nullable=False)
+    game_date: date = Field(nullable=False)
+    home_team: Optional[str] = None
+    away_team: Optional[str] = None
+    description: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), nullable=False)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC), nullable=False)
+
+    raw_stats: Optional["GameRawStats"] = Relationship(back_populates="game")
+    generated: Optional["GameGenerated"] = Relationship(back_populates="game")
+
+    __table_args__ = (UniqueConstraint("game_id"),)
+
+
+class GameRawStats(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    game_id: int = Field(foreign_key="game.id")
+    payload: str  # raw stats as JSON/text
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), nullable=False)
+
+    game: Game = Relationship(back_populates="raw_stats")
+
+
+class GameGenerated(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    game_id: int = Field(foreign_key="game.id")
+    stats: str  # deadball stats as JSON/text
+    game_text: str  # deadball game artifact (text/JSON)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), nullable=False)
+
+    game: Game = Relationship(back_populates="generated")

@@ -41,6 +41,36 @@ class RostersResponse(BaseModel):
     limit: int
 
 
+class Game(BaseModel):
+    id: int
+    game_id: str
+    game_date: datetime
+    home_team: Optional[str] = None
+    away_team: Optional[str] = None
+    description: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class GameListResponse(BaseModel):
+    items: List[Game]
+    count: int
+    date: str
+    cached: bool
+
+
+class GameGenerateRequest(BaseModel):
+    force: bool = False
+    payload: Optional[str] = Field(default=None, description="Optional raw stats payload to use instead of fetching")
+
+
+class GameGenerateResponse(BaseModel):
+    game: Game
+    stats: str
+    game_text: str
+    cached: bool
+
+
 class GenerateResponse(BaseModel):
     roster: Roster
     players: List[Player]

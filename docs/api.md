@@ -29,6 +29,21 @@ CORS: allowed origins are configured via `CORS_ORIGINS` (comma-separated), defau
   - `limit` (int, default 50, max 100)
 - Response body: `{ items: Roster[], count, offset, limit }`
 
+## Games
+
+### List Games by Date
+- `GET /api/games?date=YYYY-MM-DD`
+- Behavior: returns games for a date. Currently stubbed; caches results in DB for later reuse.
+- Response: `{ items: Game[], count, date, cached }`
+
+### Generate Deadball Output for a Game
+- `POST /api/games/{game_id}/generate`
+- Request body:
+  - `force` (bool, default false): if true, bypass cached generated output.
+  - `payload` (optional string): raw stats payload to use instead of fetching.
+- Behavior: uses cached generated output if present (unless forced); otherwise converts raw stats via embedded generator and stores results.
+- Response: `{ game, stats, game_text, cached }`
+
 ## Get Roster by Slug
 - `GET /api/rosters/{slug}`
 - Behavior:

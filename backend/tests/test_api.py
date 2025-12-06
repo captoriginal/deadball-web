@@ -67,16 +67,19 @@ def test_slug_uniqueness(client: TestClient):
 
 def test_list_rosters_pagination(client: TestClient):
     # seed two rosters
-    client.post("/api/generate", json={"mode": "manual", "payload": "One"})
-    client.post("/api/generate", json={"mode": "manual", "payload": "Two"})
+    client.post("/api/generate", json={"mode": "manual", "payload": "One", "name": "First"})
+    client.post("/api/generate", json={"mode": "manual", "payload": "Two", "name": "Second"})
 
     resp = client.get("/api/rosters", params={"limit": 1, "offset": 0})
     assert resp.status_code == 200
     data = resp.json()
     assert data["count"] == 2
     assert len(data["items"]) == 1
+    # ensure newest first (Second should be first)
+    assert data["items"][0]["name"] == "Second"
 
     resp_page_2 = client.get("/api/rosters", params={"limit": 1, "offset": 1})
     assert resp_page_2.status_code == 200
     data2 = resp_page_2.json()
     assert len(data2["items"]) == 1
+    assert data2["items"][0]["name"] == "First"
