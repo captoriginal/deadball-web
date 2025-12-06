@@ -1,26 +1,26 @@
 # Roadmap
 
-## Phase 1 – Scaffolding
-- ✅ Monorepo structure, backend FastAPI skeleton, env/config wiring.
-- ⏳ Add frontend Vite + React + Tailwind scaffold and API client.
+## Done / Current
+- Monorepo, FastAPI backend, SQLite, React/Vite/Tailwind frontend scaffold.
+- Game list + generate endpoints with caching and strict error handling (no stubs).
+- Embedded `deadball_generator` wired for boxscore → Deadball conversion (JSON/CSV).
+- Inline scorecard rendering in the frontend.
 
-## Phase 2 – Backend MVP
-- Implement SQLModel models for Roster/Player; create tables.
-- Wire generate endpoint to deadball-generator logic and persist rosters/players.
-- Add `GET /api/rosters/{slug}` and optional list endpoint.
-- Basic validation, error handling, and logging.
+## Near Term
+- Harden game conversion fidelity; add tests around `/api/games/{id}/generate`.
+- Improve scorecard UX (loading/error states, styling polish).
+- Document deployment (Render/Netlify) and production env settings.
+- End-to-end hardening of `/api/games/{id}/generate`:
+  - Define strict error shapes.
+  - Add tests: cached vs uncached; force=true; network disabled with/without cache.
+- Frontend UX polish for the main flow:
+  - Loading/error states.
+  - Make the scorecard view feel like a finished feature.
+- Minimal observability:
+  - Basic structured logging around schedule fetch, boxscore fetch, generator invocation.
+  - Enough to trace issues when users report “it broke.”
 
-## Phase 3 – Frontend MVP
-- Build roster generation form (mode/payload), trigger API calls.
-- Display generated roster + players; add simple state management.
-- Add routing for roster detail pages by slug.
-
-## Phase 4 – Quality & Ops
-- Tests for API and data layer; consider Alembic migrations.
-- Add CORS config, settings for prod URLs, and better error responses.
-- Deployment scripts (Render backend, Netlify/Vercel frontend).
-
-## Phase 5 – Enhancements
-- Authn/z for managing saved rosters.
-- Pagination/search/filter for rosters and players.
-- Styling polish and UX improvements; documentation updates.
+## Later
+- Revisit/retire legacy roster UI (backend endpoints remain for now).
+- Add pagination/search if game/roster data grows.
+- Add ops polish: logging, metrics, error reporting.
