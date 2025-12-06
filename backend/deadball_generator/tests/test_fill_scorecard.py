@@ -37,3 +37,12 @@ def test_main_from_parsed_writes_output(tmp_path: Path) -> None:
     assert "Alice" in html
     assert "Bob" in html
     assert "Charlie" in html
+
+
+def test_fmt_traits_handles_jsonish_strings() -> None:
+    assert fill._fmt_traits('["GB", "K"]') == "GB K"
+    assert fill._fmt_traits("['GB', 'K']") == "GB K"
+    assert fill._fmt_traits(["GB", "K"]) == "GB K"
+    assert fill._fmt_traits("") == ""
+    # Strings wrapped in quotes (double-encoded JSON)
+    assert fill._fmt_traits('"[\\"GB\\", \\"K\\"]"') == "GB K"

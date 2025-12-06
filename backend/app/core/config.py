@@ -31,6 +31,7 @@ class Settings:
     database_url: str = field(default_factory=lambda: os.getenv("DATABASE_URL", "sqlite:///deadball_dev.db"))
     debug: bool = field(default_factory=lambda: _env_bool("DEBUG", False))
     cors_origins: List[str] = field(default_factory=lambda: _env_list("CORS_ORIGINS", ["http://localhost:5173"]))
+    allow_generator_network: bool = field(default_factory=lambda: _env_bool("ALLOW_GENERATOR_NETWORK", True))
 
 
 @lru_cache(maxsize=1)
