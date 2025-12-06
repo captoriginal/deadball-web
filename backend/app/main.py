@@ -4,6 +4,9 @@ from fastapi import FastAPI
 
 from app import db
 from app.api.routes import router
+from app.core.config import get_settings
+
+settings = get_settings()
 
 
 @asynccontextmanager
@@ -12,7 +15,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Deadball Web API", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
 
 
 @app.get("/health", tags=["health"])
@@ -20,4 +23,4 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-app.include_router(router, prefix="/api")
+app.include_router(router, prefix=settings.api_prefix)

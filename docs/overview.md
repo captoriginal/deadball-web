@@ -47,24 +47,19 @@ deadball-web/
 │  ├─ app/
 │  │  ├─ main.py
 │  │  ├─ api/
+│  │  ├─ core/config.py
 │  │  ├─ models.py
 │  │  ├─ db.py
 │  │  └─ schemas.py
-│  ├─ deadball_generator/
-│  ├─ deadball_dev.db
-│  ├─ .venv/
-│  ├─ pyproject.toml or requirements.txt
-│  └─ tests/
+│  ├─ requirements.txt
+│  ├─ .env.example
+│  └─ deadball_dev.db (created at runtime)
 │
 ├─ frontend/
 │  ├─ package.json
 │  ├─ vite.config.js
 │  ├─ tailwind.config.js
-│  └─ src/
-│     ├─ App.jsx
-│     ├─ components/
-│     ├─ pages/
-│     └─ styles/
+│  └─ src/ (pending)
 │
 └─ docs/
    ├─ overview.md
@@ -147,10 +142,10 @@ Returns:
 
 ### Backend
 
-cd backend  
 python3 -m venv .venv  
 source .venv/bin/activate  
-uvicorn app.main:app --reload  
+pip install -r backend/requirements.txt  
+uvicorn app.main:app --reload --app-dir backend  
 
 ### Frontend
 
@@ -183,25 +178,26 @@ This `overview.md` file serves as the bridge between the two environments.
 ---
 
 ## 9. Current Status
-- Project structure defined
-- Technology stack finalized
-- Documentation scaffolding drafted
-- Backend/frontend scaffolding not yet created (next step)
+- Project structure defined; documentation set up (`docs/*`)
+- Backend skeleton running (FastAPI app, env-driven settings, DB init)
+- SQLModel models for Roster/Player defined; tables auto-created on startup
+- API has health + stub generate endpoint; persistence wiring is next
+- Frontend scaffold still pending
 
 ---
 
 ## 10. Roadmap (Initial)
 
 ### Phase 1 – Scaffolding
-- Create monorepo directories
-- Add backend FastAPI skeleton
-- Add frontend Vite + React skeleton
-- Configure Tailwind
+- ✅ Create monorepo directories
+- ✅ Add backend FastAPI skeleton + env/config wiring
+- ⏳ Add frontend Vite + React skeleton
+- ⏳ Configure Tailwind
 
 ### Phase 2 – Backend Core
-- Implement DB setup (`db.py`)
-- Create SQLModel models (Roster, Player)
-- Add basic `/generate` endpoint returning stub data
+- ✅ Implement DB setup (`db.py`) with session helper
+- ✅ Create SQLModel models (Roster, Player)
+- ⏳ Replace `/generate` stub with real logic + persistence
 
 ### Phase 3 – Frontend Core
 - Build basic form page

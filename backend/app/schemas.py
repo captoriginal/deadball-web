@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -15,12 +16,14 @@ class Player(BaseModel):
 
 
 class Roster(BaseModel):
+    id: Optional[int] = None
     slug: str
     name: str
     description: Optional[str] = None
     source_type: Optional[str] = None
     source_ref: Optional[str] = None
     public: bool = False
+    created_at: Optional[datetime] = None
 
 
 class GenerateRequest(BaseModel):
