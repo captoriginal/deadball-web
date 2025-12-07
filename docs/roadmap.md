@@ -5,6 +5,7 @@
 - Game list + generate endpoints with caching and strict error handling (no stubs).
 - Embedded `deadball_generator` wired for boxscore → Deadball conversion (JSON/CSV).
 - Inline scorecard rendering in the frontend.
+- PDF scorecard endpoint implemented (`GET /api/games/{game_id}/scorecard.pdf`), fills both pages from generated stats.
 
 ## Near Term
 - Harden game conversion fidelity; add tests around `/api/games/{id}/generate`.
@@ -19,10 +20,9 @@
 - Minimal observability:
   - Basic structured logging around schedule fetch, boxscore fetch, generator invocation.
   - Enough to trace issues when users report “it broke.”
-- PDF scorecard endpoint:
-  - Add `GET /api/games/{game_id}/scorecard.pdf?side=home|away`.
-  - Parse generated stats JSON to build lineup/bench/pitchers and fill the PDF template.
-  - Use `pypdf` utilities and reuse existing game lookup/error patterns.
+- PDF polish:
+  - Harden field mapping tests.
+  - Add sample PDFs/checksums for regression detection.
 
 ## Later
 - Revisit/retire legacy roster UI (backend endpoints remain for now).

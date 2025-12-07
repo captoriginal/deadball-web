@@ -205,25 +205,36 @@ def _serialize_game(game: models.Game) -> Game:
         game_id=game.game_id,
         game_date=game.game_date,
         home_team=game.home_team,
+        home_team_short=game.home_team_short,
         away_team=game.away_team,
+        away_team_short=game.away_team_short,
         description=game.description,
         created_at=game.created_at,
         updated_at=game.updated_at,
     )
 
 
-def _extract_team_name(team_payload: dict | None) -> str | None:
+def _extract_team_labels(team_payload: dict | None) -> tuple[str | None, str | None]:
     """
-    The schedule endpoint returns only id/name/link; older code tried abbreviation and got None.
-    Prefer abbreviation if present, then teamCode, then name.
+    The schedule endpoint returns only id/name/link; we also want shortName when present.
+    Prefer abbreviation for the main label, then teamCode, then name.
+    For short label, prefer the nickname/teamName (e.g., Phillies), then shortName, then abbreviation.
     """
     if not team_payload:
-        return None
-    return (
+        return None, None
+    label = (
         team_payload.get("abbreviation")
         or team_payload.get("teamCode")
         or team_payload.get("name")
     )
+    short = (
+        team_payload.get("teamName")
+        or team_payload.get("shortName")
+        or team_payload.get("abbreviation")
+        or team_payload.get("teamCode")
+        or team_payload.get("name")
+    )
+    return label, short
 
 
 def _get_or_create_game(session: Session, game_id: str, game_date: datetime, home: str | None, away: str | None, desc: str | None):
@@ -262,9 +273,12 @@ def list_games(
     use_cache = False
     if games and not force:
         fresh = all(not _is_stale(g.updated_at, cache_ttl_hours) for g in games)
-        missing_teams = any(not g.home_team or not g.away_team for g in games)
-        # If any cached game is missing team names and we can reach the network, treat cache as stale.
-        if fresh and not missing_teams:
+        missing_labels = any(
+            (not g.home_team or not g.away_team or not g.home_team_short or not g.away_team_short)
+            for g in games
+        )
+        # If any cached game is missing team names/short names and we can reach the network, treat cache as stale.
+        if fresh and not missing_labels:
             use_cache = True
 
     if not use_cache and settings.allow_generator_network:
@@ -279,23 +293,27 @@ def list_games(
                 # Replace existing games for this date
                 for g in schedule_games:
                     game_pk = g.get("gamePk")
-                    home_abbr = _extract_team_name(g.get("teams", {}).get("home", {}).get("team"))
-                    away_abbr = _extract_team_name(g.get("teams", {}).get("away", {}).get("team"))
+                    home_label, home_short = _extract_team_labels(g.get("teams", {}).get("home", {}).get("team"))
+                    away_label, away_short = _extract_team_labels(g.get("teams", {}).get("away", {}).get("team"))
                     desc = g.get("description") or g.get("seriesDescription")
                     game = session.exec(select(models.Game).where(models.Game.game_id == str(game_pk))).first()
                     if not game:
                         game = models.Game(
                             game_id=str(game_pk),
                             game_date=parsed_date,
-                            home_team=home_abbr,
-                            away_team=away_abbr,
+                            home_team=home_label,
+                            home_team_short=home_short,
+                            away_team=away_label,
+                            away_team_short=away_short,
                             description=desc,
                         )
                         session.add(game)
                     else:
                         game.game_date = parsed_date
-                        game.home_team = home_abbr
-                        game.away_team = away_abbr
+                        game.home_team = home_label
+                        game.home_team_short = home_short
+                        game.away_team = away_label
+                        game.away_team_short = away_short
                         game.description = desc
                         game.updated_at = datetime.now(UTC)
                         session.add(game)
@@ -409,21 +427,35 @@ def generate_game(
             except Exception as exc:
                 raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Failed to refresh boxscore: {exc}") from exc
 
-    # Backfill missing team names from raw payload if we can parse JSON
-    if (not game.home_team or not game.away_team) and raw_payload:
+    # Backfill missing team names/short names from raw payload if we can parse JSON.
+    # Also allow replacing short names if they match the long name (schedule lacked a true short name).
+    if raw_payload and (
+        not game.home_team
+        or not game.away_team
+        or not game.home_team_short
+        or not game.away_team_short
+        or game.home_team_short == game.home_team
+        or game.away_team_short == game.away_team
+    ):
         try:
             import json
 
             payload_json = json.loads(raw_payload)
             teams = payload_json.get("teams", {})
-            home = _extract_team_name(teams.get("home", {}).get("team"))
-            away = _extract_team_name(teams.get("away", {}).get("team"))
+            home, home_short = _extract_team_labels(teams.get("home", {}).get("team"))
+            away, away_short = _extract_team_labels(teams.get("away", {}).get("team"))
             updated = False
-            if home and not game.home_team:
+            if home and (not game.home_team):
                 game.home_team = home
                 updated = True
-            if away and not game.away_team:
+            if home_short and (not game.home_team_short or game.home_team_short == game.home_team):
+                game.home_team_short = home_short
+                updated = True
+            if away and (not game.away_team):
                 game.away_team = away
+                updated = True
+            if away_short and (not game.away_team_short or game.away_team_short == game.away_team):
+                game.away_team_short = away_short
                 updated = True
             if updated:
                 game.updated_at = datetime.now(UTC)

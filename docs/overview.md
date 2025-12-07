@@ -1,6 +1,6 @@
 # Deadball Web — Project Overview
 
-Deadball Web is a browser-based interface for generating Deadball-compatible game scorecards from MLB data. A React/Vite frontend calls a FastAPI backend that fetches MLB boxscores, converts them via the embedded `deadball_generator` tools, and returns both JSON and CSV scorecard data. SQLite caches games, raw boxscores, and generated outputs for reuse.
+Deadball Web is a browser-based interface for generating Deadball-compatible game scorecards from MLB data. A React/Vite frontend calls a FastAPI backend that fetches MLB boxscores, converts them via the embedded `deadball_generator` tools, and returns JSON/CSV scorecard data and a filled PDF scorecard. SQLite caches games, raw boxscores, and generated outputs for reuse.
 
 ---
 
@@ -59,7 +59,7 @@ FastAPI backend (http://localhost:8000, prefix `/api`)
  | calls `deadball_generator.cli.game` for conversion  
 Deadball scorecard HTML/CSV returned to frontend
 
-Flow: frontend calls `/api/games?date=YYYY-MM-DD` to list games → user clicks Generate → backend fetches boxscore (or uses cached/provided) → converts to Deadball JSON/CSV → frontend renders scorecard inline.
+Flow: frontend calls `/api/games?date=YYYY-MM-DD` to list games → user clicks Generate → backend fetches boxscore (or uses cached/provided) → converts to Deadball JSON/CSV and fills the PDF template → frontend renders scorecard inline (PDF endpoint available for download).
 
 ---
 
@@ -77,6 +77,7 @@ Legacy roster tables/endpoints remain but are secondary to the game flow.
 
 - `GET /api/games?date=YYYY-MM-DD` — list games for the date (cached; stub only if no network and nothing cached).  
 - `POST /api/games/{game_id}/generate` — generate Deadball output; returns `{ game, stats (JSON string), game_text (CSV string), cached }`; `force=true` bypasses cached generated output; explicit errors on failure.  
+- `GET /api/games/{game_id}/scorecard.pdf?side=home|away` — return the filled two-page PDF scorecard (away page 0, home page 1; `side` hints the requested page).  
 - Health: `GET /health`  
 - Legacy roster endpoints (`/api/generate`, `/api/rosters`) remain but are not the primary UI flow.
 

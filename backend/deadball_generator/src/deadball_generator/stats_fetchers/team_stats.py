@@ -451,6 +451,7 @@ REQUIRED_POST_BAT_COLS = [
     "Age",
     "Pos",
     "G",
+    "AVG",
     "BA",
     "OBP",
     "HR",
@@ -859,6 +860,13 @@ def fetch_postseason(team: str, season: int, rate_limit_seconds: float = 0.0, re
 
     name_col_bat = "Name" if "Name" in batting.columns else batting.columns[0]
     name_col_pit = "Name" if "Name" in pitching.columns else pitching.columns[0]
+
+    # Backfill BA from AVG if MLB payload lacked BA (common for constructed boxscores).
+    if ("BA" not in batting.columns) or batting["BA"].isna().all():
+        if "AVG" in batting.columns:
+            batting["BA"] = batting["AVG"]
+        else:
+            batting["BA"] = None
 
     # Enrich with handedness via name lookup if missing.
     hand_lookup = hands_from_names(
@@ -1336,6 +1344,9 @@ def build_deadball_postseason(team: str, season: int) -> None:
             hand_lookup,
             season=season,
         )
+        avg_val = row.get("BA")
+        if pd.isna(avg_val) or avg_val == "":
+            avg_val = row.get("AVG")
         out_row = {
             "Type": "Hitter",
             "Name": row.get("Player"),
@@ -1345,9 +1356,9 @@ def build_deadball_postseason(team: str, season: int) -> None:
             "Hand": bats_hand,
             "LR": bats_hand,
             "Throws": throws_hand,
-            "BT": fmt_two_digit(row.get("BA")),
+            "BT": fmt_two_digit(avg_val),
             "OBT": fmt_two_digit(row.get("OBP")),
-            "AVG": row.get("BA"),
+            "AVG": avg_val,
             "OBP": row.get("OBP"),
             "HR": row.get("HR"),
             "2B": row.get("2B"),

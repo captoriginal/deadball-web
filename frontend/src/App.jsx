@@ -625,12 +625,8 @@ export default function App() {
             Deadball Web
           </p>
           <h1 className="text-3xl font-semibold sm:text-4xl">
-            Generate rosters and games from MLB data
+            Generate Deadball Scoresheets from MLB Games
           </h1>
-          <p className="text-slate-600 sm:text-lg">
-            Point <code className="font-mono">VITE_API_BASE_URL</code> at your
-            FastAPI backend to try it locally.
-          </p>
         </header>
 
         <div className="grid gap-6">
