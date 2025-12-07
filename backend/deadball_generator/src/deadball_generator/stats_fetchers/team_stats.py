@@ -1334,6 +1334,20 @@ def build_deadball_postseason(team: str, season: int) -> None:
     pit = pit[~pit[pit.columns[0]].astype(str).str.contains("Totals", case=False, na=False)]
     hand_lookup = hands_from_names(list(bat.get("Player", pd.Series(dtype=str)).astype(str)) + list(pit.get("Player", pd.Series(dtype=str)).astype(str)), season=season)
 
+    # Load regular-season deadball to backfill BT when postseason AVG/BA are missing.
+    reg_bt_lookup: dict[str, object] = {}
+    reg_path = DEADBALL_DIR / f"{team.lower()}_{season}_deadball.csv"
+    if reg_path.exists():
+        try:
+            reg_df = pd.read_csv(reg_path)
+            reg_bt_lookup = {
+                normalize_player_name(row.get("Name")): row.get("BT")
+                for _, row in reg_df.iterrows()
+                if str(row.get("Type", "")).lower() == "hitter"
+            }
+        except Exception:
+            reg_bt_lookup = {}
+
     bat_rows = []
     for _, row in bat.iterrows():
         primary_pos, all_pos = parse_positions(row.get("Pos"))
@@ -1347,6 +1361,9 @@ def build_deadball_postseason(team: str, season: int) -> None:
         avg_val = row.get("BA")
         if pd.isna(avg_val) or avg_val == "":
             avg_val = row.get("AVG")
+        bt_val = fmt_two_digit(avg_val)
+        if bt_val is None:
+            bt_val = reg_bt_lookup.get(normalize_player_name(row.get("Player")))
         out_row = {
             "Type": "Hitter",
             "Name": row.get("Player"),
@@ -1356,7 +1373,7 @@ def build_deadball_postseason(team: str, season: int) -> None:
             "Hand": bats_hand,
             "LR": bats_hand,
             "Throws": throws_hand,
-            "BT": fmt_two_digit(avg_val),
+            "BT": bt_val,
             "OBT": fmt_two_digit(row.get("OBP")),
             "AVG": avg_val,
             "OBP": row.get("OBP"),

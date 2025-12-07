@@ -269,6 +269,8 @@ def list_games(
 
     games = session.exec(select(models.Game).where(models.Game.game_date == parsed_date)).all()
     cached = len(games) > 0 and not force
+    fallback_used = False
+    fallback_reason: str | None = None
 
     use_cache = False
     if games and not force:
@@ -325,6 +327,9 @@ def list_games(
 
     if not games:
         # stub fallback
+        if not fallback_used:
+            fallback_used = True
+            fallback_reason = "No games found; using stub games"
         stub_games = [
             dict(game_id=f"game-{date}-1", home_team="HOME", away_team="AWAY", description="Stub Game 1"),
             dict(game_id=f"game-{date}-2", home_team="HOME2", away_team="AWAY2", description="Stub Game 2"),
@@ -347,6 +352,8 @@ def list_games(
         count=len(games),
         date=date,
         cached=cached,
+        fallback_used=fallback_used,
+        fallback_reason=fallback_reason,
     )
 
 
