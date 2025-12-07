@@ -1,6 +1,6 @@
 # Deadball Web
 
-Monorepo for the Deadball roster generator on the web. Includes a FastAPI backend and a Vite + React + Tailwind frontend.
+Monorepo for generating Deadball scorecards from MLB games. Includes a FastAPI backend and a Vite + React + Tailwind frontend.
 
 ## Getting Started
 
@@ -34,6 +34,10 @@ Create `frontend/.env.local` with:
 ```
 VITE_API_BASE_URL=http://localhost:8000
 ```
+
+### PDF scorecards
+- Generate game data via the UI or `POST /api/games/{game_id}/generate`.
+- Download filled scorecards via `GET /api/games/{game_id}/scorecard.pdf?side=home|away` (both pages are filled; `side` controls which page you care about).
 
 ## More Documentation
 

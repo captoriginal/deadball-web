@@ -25,6 +25,11 @@ SQLite tables are created on startup via `db.init_db`.
   - `game_text`: CSV string of the Deadball scorecard.
 - Behavior: fetches or uses cached/provided boxscore, converts via `deadball_generator.cli.game`, stores raw + generated outputs. No stub fallbacks; explicit errors (e.g., fetch failure, unknown team code, generator returned no rows).
 
+### Download Filled PDF Scorecard
+- `GET /api/games/{game_id}/scorecard.pdf?side=home|away`
+- Response: PDF (two pages; away=page 0, home=page 1). The `side` query is a hint for clients on which page to display.
+- Behavior: requires a prior generate; fills lineup/bench/pitcher fields from cached generated stats; returns 404 if not generated.
+
 ## Legacy Roster Endpoints (secondary)
 - `POST /api/generate` (roster)
 - `GET /api/rosters`

@@ -40,7 +40,9 @@ class Game(SQLModel, table=True):
     game_id: str = Field(index=True, nullable=False)
     game_date: date = Field(nullable=False)
     home_team: Optional[str] = None
+    home_team_short: Optional[str] = Field(default=None, description="MLB shortName (e.g., Dodgers)")
     away_team: Optional[str] = None
+    away_team_short: Optional[str] = Field(default=None, description="MLB shortName (e.g., Dodgers)")
     description: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), nullable=False)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC), nullable=False)

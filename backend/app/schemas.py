@@ -46,7 +46,9 @@ class Game(BaseModel):
     game_id: str
     game_date: datetime
     home_team: Optional[str] = None
+    home_team_short: Optional[str] = None
     away_team: Optional[str] = None
+    away_team_short: Optional[str] = None
     description: Optional[str] = None
     created_at: datetime
     updated_at: datetime

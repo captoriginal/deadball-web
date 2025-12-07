@@ -523,14 +523,24 @@ def mlb_positions(player_entry: dict, default: str = "") -> tuple[str, str]:
     Return (primary, comma-separated) positions from an MLB Stats API player entry.
     """
     positions = player_entry.get("allPositions") or []
-    abbrs = [
-        pos.get("abbreviation") or pos.get("code")
-        for pos in positions
-        if pos.get("abbreviation") or pos.get("code")
-    ]
+    abbrs: list[str] = []
+
+    def _add(pos_code: str | None) -> None:
+        if not pos_code:
+            return
+        if pos_code not in abbrs:
+            abbrs.append(pos_code)
+
+    # Prefer the declared position (e.g., DH for Ohtani) before the allPositions list.
+    pos = player_entry.get("position", {})
+    _add(pos.get("abbreviation") or pos.get("code"))
+
+    for p in positions:
+        _add(p.get("abbreviation") or p.get("code"))
+
     if not abbrs:
-        pos = player_entry.get("position", {}).get("abbreviation") or player_entry.get("position", {}).get("code") or default
-        return pos or default, pos or default
+        return default, default
+
     primary = abbrs[0]
     return primary, ",".join(abbrs)
 
