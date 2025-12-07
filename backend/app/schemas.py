@@ -59,6 +59,8 @@ class GameListResponse(BaseModel):
     count: int
     date: str
     cached: bool
+    fallback_used: bool = False
+    fallback_reason: Optional[str] = None
 
 
 class GameGenerateRequest(BaseModel):

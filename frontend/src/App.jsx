@@ -412,7 +412,7 @@ export default function App() {
         entries.push({ field: `${prefix}LR.${i}`, value: h.LR || h.Hand });
         entries.push({ field: `${prefix}BT.${i}`, value: h.BT });
         entries.push({ field: `${prefix}OBT.${i}`, value: h.OBT });
-        entries.push({ field: `${prefix}TRAITS.${i}`, value: traitsString(h.Traits) });
+        entries.push({ field: `${prefix}TRAITS.${i}`, value: traitsStringPdf(h.Traits) });
       }
       for (let i = 0; i < bench.length && i < 5; i++) {
         const h = bench[i];
@@ -549,6 +549,9 @@ export default function App() {
       const data = await res.json();
       setGames(data.items || []);
       setGamesStatus(data.cached ? "Loaded from cache" : "Loaded fresh");
+      if (data.fallback_used) {
+        logCall(`Fallback games used: ${data.fallback_reason || "stub schedule inserted"}`);
+      }
       if (!data.cached) {
         logCall(`Backend fetched games from external schedule for ${date}`);
       } else {
