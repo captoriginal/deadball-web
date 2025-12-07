@@ -326,26 +326,8 @@ def list_games(
             pass
 
     if not games:
-        # stub fallback
-        if not fallback_used:
-            fallback_used = True
-            fallback_reason = "No games found; using stub games"
-        stub_games = [
-            dict(game_id=f"game-{date}-1", home_team="HOME", away_team="AWAY", description="Stub Game 1"),
-            dict(game_id=f"game-{date}-2", home_team="HOME2", away_team="AWAY2", description="Stub Game 2"),
-        ]
-        for g in stub_games:
-            game = models.Game(
-                game_id=g["game_id"],
-                game_date=parsed_date,
-                home_team=g["home_team"],
-                away_team=g["away_team"],
-                description=g["description"],
-            )
-            session.add(game)
-        session.commit()
-        games = session.exec(select(models.Game).where(models.Game.game_date == parsed_date)).all()
-        cached = False
+        fallback_used = False
+        fallback_reason = "There were no MLB games on this date! BooOOO!"
 
     return GameListResponse(
         items=[_serialize_game(g) for g in games],
@@ -552,5 +534,5 @@ def get_scorecard_pdf(
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
     )

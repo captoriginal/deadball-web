@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
@@ -22,6 +22,7 @@ export default function App() {
   const [date, setDate] = useState("");
   const [games, setGames] = useState([]);
   const [gamesStatus, setGamesStatus] = useState(null);
+  const [gamesStatusTone, setGamesStatusTone] = useState("info");
   const [selectedGame, setSelectedGame] = useState(null);
   const [forceGenerate, setForceGenerate] = useState(false);
   const [gameResult, setGameResult] = useState(null);
@@ -30,6 +31,12 @@ export default function App() {
   const [scorecardHtml, setScorecardHtml] = useState("");
   const [scorecardPdfUrl, setScorecardPdfUrl] = useState("");
   const [pdfFieldMapping, setPdfFieldMapping] = useState([]);
+  const [pendingScrollScorecard, setPendingScrollScorecard] = useState(false);
+  const debugMode = useMemo(
+    () => new URLSearchParams(window.location.search).get("debug") === "true",
+    []
+  );
+  const scorecardSectionRef = useRef(null);
 
   const prettyGameResult = useMemo(
     () => (gameResult ? JSON.stringify(gameResult, null, 2) : ""),
@@ -534,12 +541,27 @@ export default function App() {
 </html>`;
     setScorecardHtml(html);
   }
+
+  function scrollToScorecard() {
+    if (scorecardSectionRef.current) {
+      scorecardSectionRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
+  useEffect(() => {
+    if (pendingScrollScorecard && scorecardSectionRef.current) {
+      scrollToScorecard();
+      setPendingScrollScorecard(false);
+    }
+  }, [pendingScrollScorecard, scorecardHtml]);
   async function fetchGames() {
     if (!date) {
       setGamesStatus("Please choose a date.");
+      setGamesStatusTone("warning");
       return;
     }
     setGamesStatus("Loading...");
+    setGamesStatusTone("info");
     logCall(`Fetching games for ${date} from backend`);
     setGameResult(null);
     setSelectedGame(null);
@@ -547,8 +569,15 @@ export default function App() {
       const res = await fetch(`${API_BASE}/api/games?date=${date}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setGames(data.items || []);
-      setGamesStatus(data.cached ? "Loaded from cache" : "Loaded fresh");
+      const items = data.items || [];
+      setGames(items);
+      if (items.length === 0) {
+        setGamesStatus(data.fallback_reason || "There were no MLB games on this date! BooOOO!");
+        setGamesStatusTone("warning");
+      } else {
+        setGamesStatus(data.cached ? "Loaded from cache" : "Loaded fresh");
+        setGamesStatusTone("info");
+      }
       if (data.fallback_used) {
         logCall(`Fallback games used: ${data.fallback_reason || "stub schedule inserted"}`);
       }
@@ -559,6 +588,7 @@ export default function App() {
       }
     } catch (err) {
       setGamesStatus(`Error loading games: ${err.message}`);
+      setGamesStatusTone("error");
       setGames([]);
       logCall(`Failed to fetch games: ${err.message}`);
     }
@@ -571,6 +601,7 @@ export default function App() {
     setScorecardHtml("<p style='font-family:Arial;padding:16px;'>Generating scorecard...</p>");
     setScorecardPdfUrl("");
     setPdfFieldMapping([]);
+    setPendingScrollScorecard(true);
     try {
       const res = await fetch(`${API_BASE}/api/games/${gameId}/generate`, {
         method: "POST",
@@ -592,6 +623,7 @@ export default function App() {
       setGameStatus(data.cached ? "Served from cache" : "Generated fresh");
       logCall(data.cached ? `Backend served cached game ${gameId}` : `Backend generated game ${gameId} (may have fetched boxscore)`);
       renderScorecardFromStats(data);
+      scrollToScorecard();
       // Build PDF link for this game/side (default to home for now)
       const side = data.game?.home_team ? "home" : "away";
       setScorecardPdfUrl(`${API_BASE}/api/games/${encodeURIComponent(gameId)}/scorecard.pdf?side=${side}`);
@@ -607,6 +639,7 @@ export default function App() {
       setGameResult(null);
       logCall(`Game generate failed for ${gameId}: ${err.message}`);
       setScorecardHtml(`<p style='font-family:Arial;padding:16px;'>Error: ${escapeHtml(err.message || "Unknown error")}</p>`);
+      scrollToScorecard();
     }
   }
 
@@ -617,6 +650,57 @@ export default function App() {
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
+  }
+
+  function openPdfInNewTab(e) {
+    if (e) e.preventDefault();
+    if (!scorecardPdfUrl) return;
+    const w = window.open(scorecardPdfUrl, "_blank", "noopener,noreferrer");
+    if (w) {
+      try {
+        w.focus();
+      } catch (err) {
+        /* ignore focus errors */
+      }
+    }
+  }
+
+  function openHtmlScorecard(e) {
+    if (e) e.preventDefault();
+    if (!scorecardHtml) return;
+    const blob = new Blob([scorecardHtml], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.target = "_blank";
+    anchor.rel = "noopener";
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function formatScorecardTitle() {
+    const game = gameResult?.game;
+    if (!game) return "Generated Deadball Scoresheets";
+    const away = game.away_team || "Away";
+    const home = game.home_team || "Home";
+    let dateText = "";
+    try {
+      const d = new Date(game.game_date);
+      dateText = d.toLocaleDateString(undefined, {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      });
+    } catch (err) {
+      dateText = "";
+    }
+    const matchup = `${away} @ ${home}`;
+    return dateText
+      ? `Deadball Scoresheets for ${matchup}, ${dateText}`
+      : `Deadball Scoresheets for ${matchup}`;
   }
 
 
@@ -651,7 +735,17 @@ export default function App() {
                 Load games
               </button>
               {gamesStatus && (
-                <span className="text-sm text-slate-600">{gamesStatus}</span>
+                <span
+                  className={`text-sm ${
+                    gamesStatusTone === "warning"
+                      ? "text-orange-600"
+                      : gamesStatusTone === "error"
+                      ? "text-red-600"
+                      : "text-slate-600"
+                  }`}
+                >
+                  {gamesStatus}
+                </span>
               )}
             </div>
 
@@ -679,14 +773,16 @@ export default function App() {
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <label className="flex items-center gap-1 text-xs text-slate-600">
-                        <input
-                          type="checkbox"
-                          checked={forceGenerate}
-                          onChange={(e) => setForceGenerate(e.target.checked)}
-                        />
-                        Force
-                      </label>
+                      {debugMode && (
+                        <label className="flex items-center gap-1 text-xs text-slate-600">
+                          <input
+                            type="checkbox"
+                            checked={forceGenerate}
+                            onChange={(e) => setForceGenerate(e.target.checked)}
+                          />
+                          Force
+                        </label>
+                      )}
                       <button
                         onClick={() => {
                           setSelectedGame(g.game_id);
@@ -702,10 +798,7 @@ export default function App() {
               )}
             </div>
 
-            {gameStatus && (
-              <p className="mt-3 text-sm text-slate-700">{gameStatus}</p>
-            )}
-            {gameResult && Array.isArray(parsedGameStats?.players) && parsedGameStats.players.length > 0 && (
+            {debugMode && gameResult && Array.isArray(parsedGameStats?.players) && parsedGameStats.players.length > 0 && (
               <div className="mt-4 space-y-3">
                 <div className="max-h-72 overflow-auto rounded border border-slate-200 bg-white">
                   <table className="min-w-full text-xs">
@@ -739,8 +832,11 @@ export default function App() {
           </Section>
         </div>
         {scorecardHtml ? (
-          <section className="rounded-2xl border border-slate-200 bg-white/70 p-4 shadow-sm">
-            <h2 className="text-sm font-semibold text-slate-900 mb-3">Scorecard Preview</h2>
+          <section ref={scorecardSectionRef} className="rounded-2xl border border-slate-200 bg-white/70 p-4 shadow-sm">
+            <h2 className="text-sm font-semibold text-slate-900 mb-3">{formatScorecardTitle()}</h2>
+            {gameStatus && (
+              <p className="mb-3 text-sm text-slate-700">{gameStatus}</p>
+            )}
             {scorecardPdfUrl ? (
               <div className="mb-3">
                 <a
@@ -748,10 +844,22 @@ export default function App() {
                   target="_blank"
                   rel="noreferrer"
                   className="text-indigo-600 hover:text-indigo-700 text-sm font-semibold"
+                  onClick={openPdfInNewTab}
                 >
                   Download PDF scorecard
                 </a>
-                {Array.isArray(pdfFieldMapping) && pdfFieldMapping.length > 0 && (
+                {scorecardHtml && (
+                  <div className="mt-1">
+                    <a
+                      href="#"
+                      onClick={openHtmlScorecard}
+                      className="text-indigo-600 hover:text-indigo-700 text-sm font-semibold"
+                    >
+                      Open HTML scorecard
+                    </a>
+                  </div>
+                )}
+                {debugMode && Array.isArray(pdfFieldMapping) && pdfFieldMapping.length > 0 && (
                   <div className="mt-2 rounded border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
                     <div className="font-semibold text-slate-900 mb-1">PDF Field Mapping (values)</div>
                     <div className="max-h-48 overflow-auto space-y-1">
@@ -767,31 +875,28 @@ export default function App() {
                 )}
               </div>
             ) : null}
-            <div
-              className="overflow-auto border border-slate-200 bg-white"
-              style={{ maxHeight: "1200px" }}
-              dangerouslySetInnerHTML={{ __html: scorecardHtml }}
-            />
           </section>
         ) : null}
-        <section className="rounded-2xl border border-slate-200 bg-white/70 p-4 shadow-sm">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-900">Call log</h2>
-            <span className="text-xs text-slate-500">Backend/external activity</span>
-          </div>
-          {callLog.length === 0 ? (
-            <p className="mt-2 text-sm text-slate-600">No calls yet.</p>
-          ) : (
-            <ul className="mt-2 space-y-1 text-xs text-slate-700">
-              {callLog.map((entry, idx) => (
-                <li key={idx} className="flex items-start gap-2">
-                  <span className="text-slate-500">{entry.ts}</span>
-                  <span>{entry.message}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+        {debugMode && (
+          <section className="rounded-2xl border border-slate-200 bg-white/70 p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-slate-900">Call log</h2>
+              <span className="text-xs text-slate-500">Backend/external activity</span>
+            </div>
+            {callLog.length === 0 ? (
+              <p className="mt-2 text-sm text-slate-600">No calls yet.</p>
+            ) : (
+              <ul className="mt-2 space-y-1 text-xs text-slate-700">
+                {callLog.map((entry, idx) => (
+                  <li key={idx} className="flex items-start gap-2">
+                    <span className="text-slate-500">{entry.ts}</span>
+                    <span>{entry.message}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
       </div>
     </div>
   );
