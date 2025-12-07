@@ -28,6 +28,8 @@ export default function App() {
   const [gameStatus, setGameStatus] = useState(null);
   const [callLog, setCallLog] = useState([]);
   const [scorecardHtml, setScorecardHtml] = useState("");
+  const [scorecardPdfUrl, setScorecardPdfUrl] = useState("");
+  const [pdfFieldMapping, setPdfFieldMapping] = useState([]);
 
   const prettyGameResult = useMemo(
     () => (gameResult ? JSON.stringify(gameResult, null, 2) : ""),
@@ -63,7 +65,8 @@ export default function App() {
     if (!csvText) return { rows: [], headers: [] };
     const lines = csvText.split(/\r?\n/).filter((l) => l.trim().length > 0);
     if (lines.length === 0) return { rows: [], headers: [] };
-    const headers = lines[0].split(",").map((h) => h.trim());
+    if (lines.length === 0) return { rows: [], headers: [] };
+    const headers = (lines[0] || "").split(",").map((h) => h.trim());
     const rows = [];
     for (let i = 1; i < lines.length; i++) {
       const cells = lines[i].split(","); // acceptable for our simple CSV (names and fields are not quoted with commas)
@@ -291,6 +294,161 @@ export default function App() {
   </div>`;
   }
 
+  function normalizeKeyPdf(text) {
+    return (text || "").toString().trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+
+  function groupByTeamPdf(players) {
+    const grouped = {};
+    for (const p of players) {
+      const key = normalizeKeyPdf(p.Team || p.team);
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(p);
+    }
+    return grouped;
+  }
+
+  function batOrderKeyPdf(val) {
+    const num = parseFloat(val);
+    return Number.isNaN(num) ? 999 : num;
+  }
+
+  function splitHittersPdf(hitters) {
+    const sorted = [...hitters].sort((a, b) => batOrderKeyPdf(a.BatOrder) - batOrderKeyPdf(b.BatOrder));
+    const starters = [];
+    const bench = [];
+    const seen = new Set();
+    for (const h of sorted) {
+      const slot = (h.BatOrder || "").toString().split(".")[0];
+      if (slot && !seen.has(slot) && starters.length < 9) {
+        starters.push(h);
+        seen.add(slot);
+      } else {
+        bench.push(h);
+      }
+    }
+    return { starters, bench };
+  }
+
+  function splitPitchersPdf(pitchers) {
+    if (!pitchers.length) return { sp: [], rp: [] };
+    const sp = [];
+    const rp = [];
+    for (const p of pitchers) {
+      const pd = (p.PD || "").toUpperCase();
+      const gs = parseFloat(p.GS);
+      const isSp = pd.includes("SP") || pd.startsWith("D") || (!Number.isNaN(gs) && gs > 0);
+      if (isSp && !sp.length) {
+        sp.push(p);
+      } else {
+        rp.push(p);
+      }
+    }
+    if (!sp.length && rp.length) {
+      sp.push(rp.shift());
+    }
+    return { sp, rp };
+  }
+
+  function traitsStringPdf(val) {
+    if (!val && val !== 0) return "";
+    if (Array.isArray(val)) return val.join(" ");
+    const text = String(val);
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) return parsed.join(" ");
+    } catch (err) {
+      /* ignore */
+    }
+    return text.replace(/,/g, " ");
+  }
+
+  function buildPdfFieldMapping(data) {
+    if (!data?.stats) {
+      setPdfFieldMapping([]);
+      return;
+    }
+    let parsed = null;
+    try {
+      parsed = JSON.parse(data.stats);
+    } catch (err) {
+      setPdfFieldMapping([]);
+      return;
+    }
+    const players = parsed?.players || [];
+    if (!Array.isArray(players) || players.length === 0) {
+        setPdfFieldMapping([]);
+        return;
+    }
+    const grouped = groupByTeamPdf(players);
+    const teamsList = Object.entries(grouped);
+    const awayKey = normalizeKeyPdf(data.game?.away_team);
+    const homeKey = normalizeKeyPdf(data.game?.home_team);
+
+    const pickTeam = (key, defaultIdx) => {
+      if (key && grouped[key]) return grouped[key];
+      for (const [k, v] of teamsList) {
+        if (key && (k.includes(key) || key.includes(k))) return v;
+      }
+      if (teamsList[defaultIdx]) return teamsList[defaultIdx][1];
+      return teamsList[0] ? teamsList[0][1] : [];
+    };
+
+    const awayPlayers = pickTeam(awayKey, 0);
+    const homePlayers = pickTeam(homeKey, 1);
+
+    const buildSide = (teamPlayers, prefix) => {
+      const hitters = teamPlayers.filter((p) => (p.Type || "").toLowerCase() === "hitter");
+      const pitchers = teamPlayers.filter((p) => (p.Type || "").toLowerCase() === "pitcher");
+      const { starters, bench } = splitHittersPdf(hitters);
+      const { sp, rp } = splitPitchersPdf(pitchers);
+
+      const entries = [];
+      entries.push({ field: prefix === "AWAY" ? "AWAYTEAM" : "HOMETEAM", value: prefix === "AWAY" ? data.game?.away_team : data.game?.home_team });
+      for (let i = 0; i < starters.length && i < 9; i++) {
+        const h = starters[i];
+        entries.push({ field: `${prefix}NAME.${i}`, value: h.Name });
+        entries.push({ field: `${prefix}POS.${i}`, value: h.Pos || h.Positions });
+        entries.push({ field: `${prefix}LR.${i}`, value: h.LR || h.Hand });
+        entries.push({ field: `${prefix}BT.${i}`, value: h.BT });
+        entries.push({ field: `${prefix}OBT.${i}`, value: h.OBT });
+        entries.push({ field: `${prefix}TRAITS.${i}`, value: traitsString(h.Traits) });
+      }
+      for (let i = 0; i < bench.length && i < 5; i++) {
+        const h = bench[i];
+        entries.push({ field: `${prefix}BENCHNAME.${i}`, value: h.Name });
+        entries.push({ field: `${prefix}BENCHPOS.${i}`, value: h.Pos || h.Positions });
+        entries.push({ field: `${prefix}BENCHLR.${i}`, value: h.LR || h.Hand });
+        entries.push({ field: `${prefix}BENCHBT.${i}`, value: h.BT });
+        entries.push({ field: `${prefix}BENCHOBT.${i}`, value: h.OBT });
+        entries.push({ field: `${prefix}BENCHTRAITS.${i}`, value: traitsStringPdf(h.Traits) });
+      }
+      const pitchersList = [];
+      if (sp.length) {
+        const first = { ...sp[0], Pos: "SP" };
+        pitchersList.push(first);
+      }
+      rp.slice(0, 11).forEach((p) => pitchersList.push({ ...p, Pos: "RP" }));
+      for (let i = 0; i < pitchersList.length && i < 12; i++) {
+        const p = pitchersList[i];
+        entries.push({ field: `${prefix}PITCHIP.${i}`, value: "" });
+        entries.push({ field: `${prefix}PITCHPOS.${i}`, value: p.Pos || p.POS });
+        entries.push({ field: `${prefix}PITCHNAME.${i}`, value: p.Name });
+        entries.push({ field: `${prefix}PITCHPD.${i}`, value: p.PD });
+        entries.push({ field: `${prefix}PITCHLR.${i}`, value: p.Throws || p.Hand || p.LR });
+        entries.push({ field: `${prefix}PITCHBT.${i}`, value: p.BT });
+        entries.push({ field: `${prefix}PITCHTRAITS.${i}`, value: traitsStringPdf(p.Traits) });
+      }
+      return entries;
+    };
+
+    const mappingEntries = [
+      ...buildSide(awayPlayers, "AWAY"),
+      ...buildSide(homePlayers, "HOME"),
+    ];
+    setPdfFieldMapping(mappingEntries);
+  }
+
   function renderScorecardFromStats(data) {
     const parsed = normalizeStatsPayload(data?.stats);
     let players = parsed?.players || [];
@@ -408,6 +566,8 @@ export default function App() {
     logCall(`Requesting game generate for ${gameId} (force=${forceGenerate})`);
     setGameResult(null);
     setScorecardHtml("<p style='font-family:Arial;padding:16px;'>Generating scorecard...</p>");
+    setScorecardPdfUrl("");
+    setPdfFieldMapping([]);
     try {
       const res = await fetch(`${API_BASE}/api/games/${gameId}/generate`, {
         method: "POST",
@@ -429,6 +589,16 @@ export default function App() {
       setGameStatus(data.cached ? "Served from cache" : "Generated fresh");
       logCall(data.cached ? `Backend served cached game ${gameId}` : `Backend generated game ${gameId} (may have fetched boxscore)`);
       renderScorecardFromStats(data);
+      // Build PDF link for this game/side (default to home for now)
+      const side = data.game?.home_team ? "home" : "away";
+      setScorecardPdfUrl(`${API_BASE}/api/games/${encodeURIComponent(gameId)}/scorecard.pdf?side=${side}`);
+      try {
+        buildPdfFieldMapping(data);
+      } catch (err) {
+        // Avoid breaking the flow if mapping fails
+        setPdfFieldMapping([]);
+        logCall(`Failed to build PDF mapping: ${err.message}`);
+      }
     } catch (err) {
       setGameStatus(`Error generating game: ${err.message}`);
       setGameResult(null);
@@ -487,7 +657,7 @@ export default function App() {
             </div>
 
             <div className="mt-4 space-y-2">
-              {games.length === 0 ? (
+              {!Array.isArray(games) || games.length === 0 ? (
                 <p className="text-sm text-slate-600">
                   No games loaded yet. Choose a date and click Load.
                 </p>
@@ -536,34 +706,32 @@ export default function App() {
             {gameStatus && (
               <p className="mt-3 text-sm text-slate-700">{gameStatus}</p>
             )}
-            {gameResult && (
+            {gameResult && Array.isArray(parsedGameStats?.players) && parsedGameStats.players.length > 0 && (
               <div className="mt-4 space-y-3">
-                {parsedGameStats?.players && parsedGameStats.players.length > 0 ? (
-                  <div className="max-h-72 overflow-auto rounded border border-slate-200 bg-white">
-                    <table className="min-w-full text-xs">
-                      <thead className="bg-slate-100 text-slate-700">
-                        <tr>
-                          <th className="px-2 py-2 text-left">Name</th>
-                          <th className="px-2 py-2 text-left">Team</th>
-                          <th className="px-2 py-2 text-left">Pos</th>
-                          <th className="px-2 py-2 text-left">Type</th>
-                          <th className="px-2 py-2 text-left">Traits</th>
+                <div className="max-h-72 overflow-auto rounded border border-slate-200 bg-white">
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-slate-100 text-slate-700">
+                      <tr>
+                        <th className="px-2 py-2 text-left">Name</th>
+                        <th className="px-2 py-2 text-left">Team</th>
+                        <th className="px-2 py-2 text-left">Pos</th>
+                        <th className="px-2 py-2 text-left">Type</th>
+                        <th className="px-2 py-2 text-left">Traits</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {parsedGameStats.players.map((p, idx) => (
+                        <tr key={`${p.Name}-${idx}`} className="odd:bg-slate-50">
+                          <td className="px-2 py-1">{p.Name}</td>
+                          <td className="px-2 py-1">{p.Team}</td>
+                          <td className="px-2 py-1">{p.Pos || p.Positions}</td>
+                          <td className="px-2 py-1">{p.Type}</td>
+                          <td className="px-2 py-1">{p.Traits}</td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {parsedGameStats.players.map((p, idx) => (
-                          <tr key={`${p.Name}-${idx}`} className="odd:bg-slate-50">
-                            <td className="px-2 py-1">{p.Name}</td>
-                            <td className="px-2 py-1">{p.Team}</td>
-                            <td className="px-2 py-1">{p.Pos || p.Positions}</td>
-                            <td className="px-2 py-1">{p.Type}</td>
-                            <td className="px-2 py-1">{p.Traits}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : null}
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
                 <pre className="max-h-56 overflow-auto rounded bg-slate-900 p-3 text-xs text-slate-100">
                   {prettyGameResult}
                 </pre>
@@ -574,6 +742,32 @@ export default function App() {
         {scorecardHtml ? (
           <section className="rounded-2xl border border-slate-200 bg-white/70 p-4 shadow-sm">
             <h2 className="text-sm font-semibold text-slate-900 mb-3">Scorecard Preview</h2>
+            {scorecardPdfUrl ? (
+              <div className="mb-3">
+                <a
+                  href={scorecardPdfUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-indigo-600 hover:text-indigo-700 text-sm font-semibold"
+                >
+                  Download PDF scorecard
+                </a>
+                {Array.isArray(pdfFieldMapping) && pdfFieldMapping.length > 0 && (
+                  <div className="mt-2 rounded border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
+                    <div className="font-semibold text-slate-900 mb-1">PDF Field Mapping (values)</div>
+                    <div className="max-h-48 overflow-auto space-y-1">
+                      {pdfFieldMapping.map((m, idx) => (
+                        <div key={idx} className="flex items-start gap-2">
+                          <span className="font-mono text-slate-800">{m.field}</span>
+                          <span className="text-slate-600">=</span>
+                          <span className="text-slate-800">{m.value || ""}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : null}
             <div
               className="overflow-auto border border-slate-200 bg-white"
               style={{ maxHeight: "1200px" }}

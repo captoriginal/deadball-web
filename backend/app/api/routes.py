@@ -5,12 +5,14 @@ from typing import Iterable, List
 import requests
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app import models
 from app.db import get_session
 from app.core.config import get_settings
+from app.pdf.scorecard import build_scorecard_field_values, render_scorecard_pdf
 from app.schemas import (
     Game,
     GameGenerateRequest,
@@ -463,4 +465,39 @@ def generate_game(
         stats=generated_row.stats,
         game_text=generated_row.game_text,
         cached=False,
+    )
+
+
+@router.get("/games/{game_id}/scorecard.pdf", tags=["games"])
+def get_scorecard_pdf(
+    game_id: str,
+    side: str = Query("home", description="home or away"),
+    session: Session = Depends(get_session),
+):
+    """Return a filled scorecard PDF for the requested side (home/away)."""
+    game = session.exec(select(models.Game).where(models.Game.game_id == game_id)).first()
+    if not game:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Game not found; list games first")
+
+    generated = session.exec(select(models.GameGenerated).where(models.GameGenerated.game_id == game.id)).first()
+    if not generated:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Generated stats not found for this game; generate first.",
+        )
+
+    try:
+        field_values = build_scorecard_field_values(game, generated.stats)
+        pdf_bytes = render_scorecard_pdf(field_values)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to build scorecard PDF: {exc}") from exc
+
+    team_label = f"{game.away_team or 'away'}-at-{game.home_team or 'home'}"
+    filename = f"{game.game_date}-{team_label}-deadball-scorecard.pdf"
+    return StreamingResponse(
+        iter([pdf_bytes]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
