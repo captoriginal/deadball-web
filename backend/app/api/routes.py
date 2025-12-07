@@ -533,8 +533,22 @@ def get_scorecard_pdf(
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to build scorecard PDF: {exc}") from exc
 
-    team_label = f"{game.away_team or 'away'}-at-{game.home_team or 'home'}"
-    filename = f"{game.game_date}-{team_label}-deadball-scorecard.pdf"
+    def _safe_team_label(name: str | None, fallback: str) -> str:
+        text = (name or fallback).strip()
+        if not text:
+            text = fallback
+        # Keep letters/numbers/space/@/dash/dot; drop other characters to keep filenames safe.
+        return re.sub(r"[^A-Za-z0-9 @.-]", "", text)
+
+    try:
+        date_str = game.game_date.strftime("%Y-%m-%d")
+    except Exception:
+        date_str = str(game.game_date)
+
+    away_label = _safe_team_label(game.away_team, "Away")
+    home_label = _safe_team_label(game.home_team, "Home")
+    matchup_label = f"{away_label} @ {home_label}"
+    filename = f"{date_str} - {matchup_label} - Deadball.pdf"
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
