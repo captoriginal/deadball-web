@@ -59,7 +59,7 @@ FastAPI backend (http://localhost:8000, prefix `/api`)
  | calls `deadball_generator.cli.game` for conversion  
 Deadball scorecard HTML/CSV returned to frontend
 
-Flow: frontend calls `/api/games?date=YYYY-MM-DD` to list games → user clicks Generate → backend fetches boxscore (or uses cached/provided) → converts to Deadball JSON/CSV and fills the PDF template → frontend renders scorecard inline (PDF endpoint available for download).
+Flow: frontend calls `/api/games?date=YYYY-MM-DD` to list games → user clicks Generate → backend fetches boxscore (or uses cached/provided) → converts to Deadball JSON/CSV and fills the PDF template → frontend renders scorecard inline; PDF endpoint is served inline to open in a new tab.
 
 ---
 
@@ -75,7 +75,7 @@ Legacy roster tables/endpoints remain but are secondary to the game flow.
 
 ## 6. API Endpoints (current)
 
-- `GET /api/games?date=YYYY-MM-DD` — list games for the date (cached; stub only if no network and nothing cached).  
+- `GET /api/games?date=YYYY-MM-DD` — list games for the date (cached; returns empty with a “no games” message when there were no MLB games).  
 - `POST /api/games/{game_id}/generate` — generate Deadball output; returns `{ game, stats (JSON string), game_text (CSV string), cached }`; `force=true` bypasses cached generated output; explicit errors on failure.  
 - `GET /api/games/{game_id}/scorecard.pdf?side=home|away` — return the filled two-page PDF scorecard (away page 0, home page 1; `side` hints the requested page).  
 - Health: `GET /health`  

@@ -35,9 +35,13 @@ Create `frontend/.env.local` with:
 VITE_API_BASE_URL=http://localhost:8000
 ```
 
-### PDF scorecards
+### PDF/HTML scorecards
 - Generate game data via the UI or `POST /api/games/{game_id}/generate`.
-- Download filled scorecards via `GET /api/games/{game_id}/scorecard.pdf?side=home|away` (both pages are filled; `side` controls which page you care about).
+- View/download filled scorecards via `GET /api/games/{game_id}/scorecard.pdf?side=home|away` (served inline so browsers open in a new tab by default).
+- The UI also offers an “Open HTML scorecard” link for the rendered HTML (debug-friendly).
+
+### Debug view (optional)
+- Append `?debug=true` to the frontend URL to see the call log, force-regenerate toggle, and raw game payload table.
 
 ## More Documentation
 
