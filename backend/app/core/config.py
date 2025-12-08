@@ -27,22 +27,18 @@ def _env_list(name: str, default: List[str] | None = None) -> List[str]:
 def _cors_origins() -> List[str]:
     """
     Merge any CORS_ORIGINS env override with a sane set of local dev hosts/ports.
-    Keeps order and deduplicates.
+    Default is permissive (*) to support the Tauri scheme (tauri://localhost) in the desktop app.
     """
-    base = [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5174",
-        "http://localhost:5175",
-        "http://127.0.0.1:5175",
-        "http://localhost:5176",
-        "http://127.0.0.1:5176",
-    ]
+    base_tauri = ["tauri://localhost", "app://localhost", "http://localhost:8000", "http://127.0.0.1:8000"]
     env_origins = _env_list("CORS_ORIGINS", [])
-    merged = env_origins + base
+    if env_origins:
+        merged = env_origins + base_tauri
+    else:
+        # Default permissive for desktop app.
+        merged = ["*"] + base_tauri
+
     seen = set()
-    deduped: List[str] = []
+    deduped = []
     for origin in merged:
         if origin in seen:
             continue

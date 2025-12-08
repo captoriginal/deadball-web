@@ -9,6 +9,11 @@
     "devUrl": "http://localhost:5173",
     "frontendDist": "../frontend/dist"
   },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg", "app"],
+    "icon": ["icons/icon.icns", "icons/icon.png", "icons/icon.ico"]
+  },
   "app": {
     "windows": [
       {
