@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from io import BytesIO
+from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Tuple
 
 from pypdf import PdfReader, PdfWriter
@@ -10,7 +11,8 @@ from pypdf.generic import NameObject, BooleanObject
 
 from app import models
 
-TEMPLATE_PATH = "backend/app/pdf/templates/deadball_scorecard_template.pdf"
+# Resolve the template relative to this file so it works regardless of CWD.
+TEMPLATE_PATH = str(Path(__file__).resolve().parent / "templates/deadball_scorecard_template.pdf")
 
 
 def _safe_float(val) -> float | None:

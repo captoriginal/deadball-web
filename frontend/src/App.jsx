@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 function Section({ title, children, description }) {
   return (
@@ -466,14 +467,16 @@ export default function App() {
       teamsMeta = {};
     }
     if (players.length === 0) {
-      setScorecardHtml("<p style='font-family:Arial;padding:16px;'>No players returned.</p>");
-      return;
+      const msg = "<p style='font-family:Arial;padding:16px;'>No players returned.</p>";
+      setScorecardHtml(msg);
+      return msg;
     }
     const grouped = groupPlayers(players);
     const teamEntries = Object.entries(grouped);
     if (teamEntries.length === 0) {
-      setScorecardHtml("<p style='font-family:Arial;padding:16px;'>No teams detected in stats.</p>");
-      return;
+      const msg = "<p style='font-family:Arial;padding:16px;'>No teams detected in stats.</p>";
+      setScorecardHtml(msg);
+      return msg;
     }
 
     const [awayTeamName, homeTeamName] =
@@ -540,6 +543,7 @@ export default function App() {
 </body>
 </html>`;
     setScorecardHtml(html);
+    return html;
   }
 
   function scrollToScorecard() {
@@ -594,14 +598,14 @@ export default function App() {
     }
   }
 
-  async function generateGame(gameId) {
+  async function generateGame(gameId, { scrollToScorecard: doScroll = true } = {}) {
     setGameStatus("Generating...");
     logCall(`Requesting game generate for ${gameId} (force=${forceGenerate})`);
     setGameResult(null);
     setScorecardHtml("<p style='font-family:Arial;padding:16px;'>Generating scorecard...</p>");
     setScorecardPdfUrl("");
     setPdfFieldMapping([]);
-    setPendingScrollScorecard(true);
+    setPendingScrollScorecard(doScroll);
     try {
       const res = await fetch(`${API_BASE}/api/games/${gameId}/generate`, {
         method: "POST",
@@ -622,11 +626,14 @@ export default function App() {
       setGameResult(data);
       setGameStatus(data.cached ? "Served from cache" : "Generated fresh");
       logCall(data.cached ? `Backend served cached game ${gameId}` : `Backend generated game ${gameId} (may have fetched boxscore)`);
-      renderScorecardFromStats(data);
-      scrollToScorecard();
+      const html = renderScorecardFromStats(data);
+      if (doScroll) {
+        scrollToScorecard();
+      }
       // Build PDF link for this game/side (default to home for now)
       const side = data.game?.home_team ? "home" : "away";
-      setScorecardPdfUrl(`${API_BASE}/api/games/${encodeURIComponent(gameId)}/scorecard.pdf?side=${side}`);
+      const pdfUrl = `${API_BASE}/api/games/${encodeURIComponent(gameId)}/scorecard.pdf?side=${side}`;
+      setScorecardPdfUrl(pdfUrl);
       try {
         buildPdfFieldMapping(data);
       } catch (err) {
@@ -634,12 +641,16 @@ export default function App() {
         setPdfFieldMapping([]);
         logCall(`Failed to build PDF mapping: ${err.message}`);
       }
+      return { data, pdfUrl, html };
     } catch (err) {
       setGameStatus(`Error generating game: ${err.message}`);
       setGameResult(null);
       logCall(`Game generate failed for ${gameId}: ${err.message}`);
       setScorecardHtml(`<p style='font-family:Arial;padding:16px;'>Error: ${escapeHtml(err.message || "Unknown error")}</p>`);
-      scrollToScorecard();
+      if (doScroll) {
+        scrollToScorecard();
+      }
+      return null;
     }
   }
 
@@ -652,10 +663,39 @@ export default function App() {
       .replace(/"/g, "&quot;");
   }
 
-  function openPdfInNewTab(e) {
-    if (e) e.preventDefault();
-    if (!scorecardPdfUrl) return;
-    const w = window.open(scorecardPdfUrl, "_blank", "noopener,noreferrer");
+  function safeTeamLabel(name, fallback) {
+    const text = (name || fallback || "").trim();
+    if (!text) return fallback || "Team";
+    return text.replace(/[^A-Za-z0-9 @.-]/g, "");
+  }
+
+  function buildScorecardFilename(game, ext = "pdf") {
+    if (!game) return `deadball-scorecard.${ext}`;
+    let dateText = "game";
+    try {
+      const d = new Date(game.game_date);
+      if (!Number.isNaN(d.getTime())) {
+        dateText = d.toISOString().split("T")[0];
+      }
+    } catch (err) {
+      dateText = "game";
+    }
+    const away = safeTeamLabel(game.away_team, "Away");
+    const home = safeTeamLabel(game.home_team, "Home");
+    return `${dateText} - ${away} @ ${home} - Deadball.${ext}`;
+  }
+
+  async function openExternal(url) {
+    if (!url) return;
+    // Try Tauri shell first, fall back to window.open if unavailable.
+    try {
+      const { open } = await import("@tauri-apps/plugin-shell");
+      await open(url);
+      return;
+    } catch (err) {
+      console.error("Failed to open via Tauri shell:", err);
+    }
+    const w = window.open(url, "_blank", "noopener,noreferrer");
     if (w) {
       try {
         w.focus();
@@ -665,19 +705,105 @@ export default function App() {
     }
   }
 
+  function openPdfInNewTab(e) {
+    if (e) e.preventDefault();
+    if (!scorecardPdfUrl) return;
+    // Try native save first; fall back to browser.
+    void (async () => {
+      const saved = await downloadPdfToDownloads();
+      if (!saved) {
+        await openExternal(scorecardPdfUrl);
+      }
+    })();
+  }
+
   function openHtmlScorecard(e) {
     if (e) e.preventDefault();
     if (!scorecardHtml) return;
     const blob = new Blob([scorecardHtml], { type: "text/html" });
     const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.target = "_blank";
-    anchor.rel = "noopener";
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
+    void openExternal(url);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function handleDownloadPdf(gameId) {
+    setSelectedGame(gameId);
+    const result = await generateGame(gameId, { scrollToScorecard: false });
+    if (!result?.pdfUrl) return;
+    const filename = buildScorecardFilename(result.data?.game, "pdf");
+    const saved = await downloadPdfToDownloads(result.pdfUrl, filename);
+    if (!saved) {
+      await openExternal(result.pdfUrl);
+    }
+  }
+
+  async function handleDownloadHtml(gameId) {
+    setSelectedGame(gameId);
+    const result = await generateGame(gameId, { scrollToScorecard: false });
+    const html = result?.html || scorecardHtml;
+    if (!html) return;
+    const filename = buildScorecardFilename(result.data?.game, "html");
+    const saved = await downloadHtmlToDownloads(html, filename);
+    if (!saved) {
+      const blob = new Blob([html], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      await openExternal(url);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+  }
+
+  async function downloadPdfToDownloads(pdfUrlOverride, filenameOverride) {
+    const targetUrl = pdfUrlOverride || scorecardPdfUrl;
+    if (!targetUrl) return false;
+    try {
+      const res = await fetch(targetUrl);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const arrayBuffer = await res.arrayBuffer();
+      const [{ invoke }, { downloadDir, join }] = await Promise.all([
+        import("@tauri-apps/api/core"),
+        import("@tauri-apps/api/path"),
+      ]);
+
+      const cd = res.headers.get("content-disposition") || "";
+      const filenameMatch = cd.match(/filename\*?=(?:UTF-8'')?"?([^";]+)/i);
+      const filename = filenameMatch?.[1] || filenameOverride || "deadball-scorecard.pdf";
+      const downloads = await downloadDir();
+      const filePath = await join(downloads, filename);
+      await invoke("save_scorecard_pdf", {
+        path: filePath,
+        // Convert to a plain array for serde
+        bytes: Array.from(new Uint8Array(arrayBuffer)),
+      });
+      setGameStatus(`Saved scorecard to ${filePath}`);
+      logCall(`Saved scorecard to ${filePath}`);
+      return true;
+    } catch (err) {
+      setGameStatus(`Failed to save PDF: ${err.message}`);
+      logCall(`PDF download failed: ${err.message}`);
+      return false;
+    }
+  }
+
+  async function downloadHtmlToDownloads(htmlContent, filenameOverride) {
+    if (!htmlContent) return false;
+    try {
+      const [{ invoke }, { downloadDir, join }] = await Promise.all([
+        import("@tauri-apps/api/core"),
+        import("@tauri-apps/api/path"),
+      ]);
+      const encoder = new TextEncoder();
+      const bytes = Array.from(encoder.encode(htmlContent));
+      const downloads = await downloadDir();
+      const filePath = await join(downloads, filenameOverride || "deadball-scorecard.html");
+      await invoke("save_scorecard_pdf", { path: filePath, bytes });
+      setGameStatus(`Saved HTML scorecard to ${filePath}`);
+      logCall(`Saved HTML scorecard to ${filePath}`);
+      return true;
+    } catch (err) {
+      setGameStatus(`Failed to save HTML: ${err.message}`);
+      logCall(`HTML download failed: ${err.message}`);
+      return false;
+    }
   }
 
   function formatScorecardTitle() {
@@ -784,13 +910,16 @@ export default function App() {
                         </label>
                       )}
                       <button
-                        onClick={() => {
-                          setSelectedGame(g.game_id);
-                          generateGame(g.game_id);
-                        }}
-                        className="rounded bg-slate-900 px-3 py-1 text-xs font-semibold text-white hover:bg-slate-800"
+                        onClick={() => handleDownloadPdf(g.game_id)}
+                        className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-700"
                       >
-                        Generate
+                        Download PDF
+                      </button>
+                      <button
+                        onClick={() => handleDownloadHtml(g.game_id)}
+                        className="rounded border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-800 hover:border-slate-400"
+                      >
+                        Download HTML
                       </button>
                     </div>
                   </div>
@@ -839,26 +968,7 @@ export default function App() {
             )}
             {scorecardPdfUrl ? (
               <div className="mb-3">
-                <a
-                  href={scorecardPdfUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-indigo-600 hover:text-indigo-700 text-sm font-semibold"
-                  onClick={openPdfInNewTab}
-                >
-                  Download PDF scorecard
-                </a>
-                {scorecardHtml && (
-                  <div className="mt-1">
-                    <a
-                      href="#"
-                      onClick={openHtmlScorecard}
-                      className="text-indigo-600 hover:text-indigo-700 text-sm font-semibold"
-                    >
-                      Open HTML scorecard
-                    </a>
-                  </div>
-                )}
+                {/* Download buttons now live next to each game in the list */}
                 {debugMode && Array.isArray(pdfFieldMapping) && pdfFieldMapping.length > 0 && (
                   <div className="mt-2 rounded border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
                     <div className="font-semibold text-slate-900 mb-1">PDF Field Mapping (values)</div>
