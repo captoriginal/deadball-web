@@ -12,6 +12,7 @@ frontend/.env.local
 # Backend env + DB
 backend/.env
 deadball_dev.db
+*.db
 backend/deadball_generator/assets/Deadball Masters of the Game.pdf
 
 # OS/editor cruft
