@@ -33,6 +33,11 @@ cd src-tauri
 npx @tauri-apps/cli icon icons/icon.png   # only when icon changes
 npx @tauri-apps/cli build
 ```
+Before building, regenerate the bundled backend archive:
+```bash
+bash scripts/package-backend.sh
+npx @tauri-apps/cli build
+```
 Outputs (macOS):
 - `.app`: `src-tauri/target/release/bundle/macos/Deadball Desktop.app`
 - `.dmg`: `src-tauri/target/release/bundle/dmg/Deadball Desktop_0.1.0_aarch64.dmg`

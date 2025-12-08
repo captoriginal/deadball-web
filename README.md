@@ -69,3 +69,5 @@ VITE_API_BASE_URL=http://localhost:8000
 - [Game Flow](docs/game-flow.md)
 - [Roadmap](docs/roadmap.md)
 - [Desktop (Tauri)](docs/desktop.md)
+
+Note: the bundled backend archive (`src-tauri/resources/backend-template.tar.gz`) is git-ignored; regenerate it with `bash scripts/package-backend.sh` before running a desktop build.
