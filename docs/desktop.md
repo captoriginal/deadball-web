@@ -5,7 +5,7 @@ This app wraps the web frontend in a Tauri shell and starts the backend for you 
 ## Prerequisites
 - Rust toolchain (for Tauri)
 - Node.js + npm
-- Python backend deps installed in the repo venv:
+- Python backend deps installed in the repo venv (used to build the bundled copy):
   ```bash
   cd backend
   python -m venv .venv
@@ -25,7 +25,7 @@ This:
 - starts the backend (from `/Users/steve/dev/web/deadball-web/backend` if present)
 - opens the desktop window
 
-If the backend path changes, update `resolve_backend_dir` in `src-tauri/src/main.rs` or add a configurable env var.
+If the backend path changes, update the backend path logic in `src-tauri/src/main.rs` or add a configurable env var.
 
 ## Build Bundles
 ```bash
@@ -38,7 +38,8 @@ Outputs (macOS):
 - `.dmg`: `src-tauri/target/release/bundle/dmg/Deadball Desktop_0.1.0_aarch64.dmg`
 
 ## Behavior Notes
-- The app starts the backend pointing at the repo backend; make sure `.venv` is installed. Logs go to stdout; backend helper logs can write to `/tmp/deadball-backend.log`.
+- A copy of `backend` (including `.venv` and templates) is bundled to `Resources/backend-template` and copied to the user’s app data dir on first run; the backend then runs from that writable location. Dev mode still prefers the repo backend.
+- Logs go to stdout; backend helper logs can write to `/tmp/deadball-backend.log`.
 - Download buttons:
   - PDF/HTML downloads save directly to `~/Downloads` in Tauri; browser fallback if native save fails.
   - Filenames use `YYYY-MM-DD - Away @ Home - Deadball.(pdf|html)`.

@@ -12,7 +12,8 @@
   "bundle": {
     "active": true,
     "targets": ["dmg", "app"],
-    "icon": ["icons/icon.icns", "icons/icon.png", "icons/icon.ico"]
+    "icon": ["icons/icon.icns", "icons/icon.png", "icons/icon.ico"],
+    "resources": ["resources/backend-template.tar.gz"]
   },
   "app": {
     "windows": [

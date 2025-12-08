@@ -2,61 +2,25 @@
 
 use std::{
     env,
-    fs,
+    fs::{self, OpenOptions},
+    io::Write as IoWrite,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
     thread,
 };
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
-use std::io::Write;
+
+type SharedChild = Arc<Mutex<Option<Child>>>;
 
 fn log_backend(msg: &str) {
-    if let Ok(mut f) = fs::OpenOptions::new()
+    if let Ok(mut f) = OpenOptions::new()
         .create(true)
         .append(true)
         .open("/tmp/deadball-backend.log")
     {
         let _ = writeln!(f, "{}", msg);
     }
-}
-
-type SharedChild = Arc<Mutex<Option<Child>>>;
-
-fn resolve_backend_dir(app: Option<&tauri::AppHandle>) -> PathBuf {
-    // Prefer a known development absolute path if it exists (useful when running a local bundle).
-    let dev_absolute = PathBuf::from("/Users/steve/dev/web/deadball-web/backend");
-    if dev_absolute.exists() {
-        log_backend("Using dev backend path: /Users/steve/dev/web/deadball-web/backend");
-        return dev_absolute;
-    }
-    // Prefer bundled Resources/backend when packaged.
-    if let Some(handle) = app {
-        if let Ok(res_dir) = handle.path().resource_dir() {
-            let bundled = res_dir.join("backend");
-            if bundled.exists() {
-                log_backend(&format!(
-                    "Using bundled backend path from resources: {}",
-                    bundled.display()
-                ));
-                return bundled;
-            }
-        }
-    }
-    // Fallback to dev relative path (repo layout).
-    if let Ok(exe_path) = env::current_exe() {
-        if let Some(parent) = exe_path.parent() {
-            let dev = parent.join("../backend");
-            if dev.exists() {
-                log_backend(&format!(
-                    "Using dev-relative backend path next to executable: {}",
-                    dev.display()
-                ));
-                return dev;
-            }
-        }
-    }
-    PathBuf::from("../backend")
 }
 
 fn python_cmd(backend_dir: &Path) -> PathBuf {
@@ -93,20 +57,17 @@ fn spawn_backend(backend_dir: &Path) -> std::io::Result<Child> {
     cmd.spawn()
 }
 
-fn launch_backend(proc_ref: SharedChild, app_handle: tauri::AppHandle) {
-    thread::spawn(move || {
-        let backend_dir = resolve_backend_dir(Some(&app_handle));
-        match spawn_backend(&backend_dir) {
-            Ok(child) => {
-                *proc_ref.lock().unwrap() = Some(child);
-                log_backend("Backend started successfully");
-            }
-            Err(err) => {
-                let msg = format!("Failed to start backend: {err}");
-                eprintln!("{msg}");
-                log_backend(&msg);
-                let _ = app_handle.emit("backend-error", err.to_string());
-            }
+fn launch_backend(proc_ref: SharedChild, backend_dir: PathBuf, app_handle: tauri::AppHandle) {
+    thread::spawn(move || match spawn_backend(&backend_dir) {
+        Ok(child) => {
+            *proc_ref.lock().unwrap() = Some(child);
+            log_backend("Backend started successfully");
+        }
+        Err(err) => {
+            let msg = format!("Failed to start backend: {err}");
+            eprintln!("{msg}");
+            log_backend(&msg);
+            let _ = app_handle.emit("backend-error", err.to_string());
         }
     });
 }
@@ -123,6 +84,84 @@ fn save_scorecard_pdf(path: String, bytes: Vec<u8>) -> Result<(), String> {
     fs::write(path, bytes).map_err(|e| e.to_string())
 }
 
+fn prepare_backend(app: &tauri::App) -> PathBuf {
+    // Prefer a known development absolute path if it exists (useful when running a local bundle).
+    let dev_absolute = PathBuf::from("/Users/steve/dev/web/deadball-web/backend");
+    if dev_absolute.exists() {
+        log_backend("Using dev backend path: /Users/steve/dev/web/deadball-web/backend");
+        return dev_absolute;
+    }
+
+    // Choose an app data location for a writable backend copy.
+    let app_data_backend = app
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| PathBuf::from("backend"))
+        .join("backend");
+
+    if app_data_backend.exists() {
+        log_backend(&format!(
+            "Using existing app data backend: {}",
+            app_data_backend.display()
+        ));
+        return app_data_backend;
+    }
+
+    // Extract from bundled resources/backend-template.tar.gz into app data.
+    if let Ok(res_dir) = app.path().resource_dir() {
+        let archive = res_dir.join("backend-template.tar.gz");
+        if archive.exists() {
+            let _ = fs::create_dir_all(app_data_backend.parent().unwrap_or(&app_data_backend));
+            let status = Command::new("tar")
+                .args([
+                    "-xzf",
+                    archive
+                        .to_str()
+                        .unwrap_or("backend-template.tar.gz"),
+                    "-C",
+                    app_data_backend
+                        .parent()
+                        .unwrap_or(&app_data_backend)
+                        .to_str()
+                        .unwrap_or("."),
+                ])
+                .status();
+            match status {
+                Ok(s) if s.success() => {
+                    log_backend(&format!(
+                        "Extracted backend template to app data: {}",
+                        app_data_backend.display()
+                    ));
+                    return app_data_backend;
+                }
+                Ok(s) => log_backend(&format!("tar exited with status: {}", s)),
+                Err(err) => log_backend(&format!("Failed to run tar: {}", err)),
+            }
+        } else {
+            log_backend("No backend-template found in resources");
+        }
+    } else {
+        log_backend("No resource dir available");
+    }
+
+    // Fallback to dev-relative path (repo layout).
+    if let Ok(exe_path) = env::current_exe() {
+        if let Some(parent) = exe_path.parent() {
+            let dev = parent.join("../backend");
+            if dev.exists() {
+                log_backend(&format!(
+                    "Using dev-relative backend path next to executable: {}",
+                    dev.display()
+                ));
+                return dev;
+            }
+        }
+    }
+
+    log_backend("Falling back to ../backend");
+    PathBuf::from("../backend")
+}
+
 fn main() {
     let backend_proc: SharedChild = Arc::new(Mutex::new(None));
 
@@ -132,7 +171,8 @@ fn main() {
         .setup({
             let backend_proc = backend_proc.clone();
             move |app| {
-                launch_backend(backend_proc.clone(), app.handle().clone());
+                let backend_path = prepare_backend(app);
+                launch_backend(backend_proc.clone(), backend_path, app.handle().clone());
                 Ok(())
             }
         })
