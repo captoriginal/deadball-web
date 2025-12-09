@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -44,7 +44,7 @@ class RostersResponse(BaseModel):
 class Game(BaseModel):
     id: int
     game_id: str
-    game_date: datetime
+    game_date: date
     home_team: Optional[str] = None
     home_team_short: Optional[str] = None
     away_team: Optional[str] = None

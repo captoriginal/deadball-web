@@ -2,6 +2,8 @@
 
 Deadball Web is a browser-based interface for generating Deadball-compatible game scorecards from MLB data. A React/Vite frontend calls a FastAPI backend that fetches MLB boxscores, converts them via the embedded `deadball_generator` tools, and returns JSON/CSV scorecard data and a filled PDF scorecard. SQLite caches games, raw boxscores, and generated outputs for reuse.
 
+There is also a Tauri desktop wrapper that bundles the frontend and starts the backend from the repo (or a packaged backend) so users can generate/download scorecards without a browser.
+
 ---
 
 ## 1. Goals
@@ -59,7 +61,7 @@ FastAPI backend (http://localhost:8000, prefix `/api`)
  | calls `deadball_generator.cli.game` for conversion  
 Deadball scorecard HTML/CSV returned to frontend
 
-Flow: frontend calls `/api/games?date=YYYY-MM-DD` to list games → user clicks Generate → backend fetches boxscore (or uses cached/provided) → converts to Deadball JSON/CSV and fills the PDF template → frontend renders scorecard inline; PDF endpoint is served inline to open in a new tab.
+Flow: frontend calls `/api/games?date=YYYY-MM-DD` to list games → user clicks Download PDF/HTML → backend fetches boxscore (or uses cached/provided) → converts to Deadball JSON/CSV and fills the PDF template → frontend saves the PDF/HTML (Tauri saves to disk; web downloads via browser).
 
 ---
 
