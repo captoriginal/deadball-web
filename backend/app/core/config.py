@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import List
@@ -6,7 +7,10 @@ from typing import List
 from dotenv import load_dotenv
 
 # Load environment variables from a local .env file if present.
-load_dotenv()
+# Prefer the backend/.env file so running from the repo root still picks up settings.
+# __file__ is backend/app/core/config.py -> parents[2] is backend/
+BACKEND_ENV = Path(__file__).resolve().parents[2] / ".env"
+load_dotenv(BACKEND_ENV)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:

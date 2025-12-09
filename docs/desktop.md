@@ -40,7 +40,17 @@ npx @tauri-apps/cli build
 ```
 Outputs (macOS):
 - `.app`: `src-tauri/target/release/bundle/macos/Deadball Desktop.app`
-- `.dmg`: `src-tauri/target/release/bundle/dmg/Deadball Desktop_0.1.0_aarch64.dmg`
+- `.dmg`: `src-tauri/target/release/bundle/dmg/Deadball Desktop_0.1.0_x64.dmg` (requires `hdiutil` and a GUI-capable macOS; headless/sandboxed envs may fail)
+- Zip fallback if DMG is blocked:
+  ```bash
+  cd src-tauri/target/release/bundle/macos
+  ditto -c -k --sequesterRsrc --keepParent "Deadball Desktop.app" "../Deadball-Desktop-macos.zip"
+  ```
+
+Full one-liner from repo root (macOS):
+```bash
+bash scripts/package-backend.sh && TAURI_SKIP_DEVSERVER_BUILD=1 cargo tauri build
+```
 
 ## Behavior Notes
 - A copy of `backend` (including `.venv` and templates) is bundled to `Resources/backend-template` and copied to the user’s app data dir on first run; the backend then runs from that writable location. Dev mode still prefers the repo backend.

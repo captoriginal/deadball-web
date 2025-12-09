@@ -687,7 +687,19 @@ export default function App() {
 
   async function openExternal(url) {
     if (!url) return;
-    // Try Tauri shell first, fall back to window.open if unavailable.
+    // In browser builds, use window.open immediately.
+    if (!isTauri) {
+      const w = window.open(url, "_blank", "noopener,noreferrer");
+      if (w) {
+        try {
+          w.focus();
+        } catch (err) {
+          /* ignore focus errors */
+        }
+      }
+      return;
+    }
+    // Tauri: prefer native shell; fall back to browser window.
     try {
       const { open } = await import("@tauri-apps/plugin-shell");
       await open(url);
@@ -731,6 +743,14 @@ export default function App() {
     const result = await generateGame(gameId, { scrollToScorecard: false });
     if (!result?.pdfUrl) return;
     const filename = buildScorecardFilename(result.data?.game, "pdf");
+    // In the browser, trigger a download directly to avoid popup blockers.
+    if (!isTauri) {
+      const ok = await browserFetchAndDownload(result.pdfUrl, filename);
+      if (ok) {
+        setGameStatus(`Downloaded ${filename}`);
+      }
+      return;
+    }
     const saved = await downloadPdfToDownloads(result.pdfUrl, filename);
     if (!saved) {
       await openExternal(result.pdfUrl);
@@ -743,6 +763,13 @@ export default function App() {
     const html = result?.html || scorecardHtml;
     if (!html) return;
     const filename = buildScorecardFilename(result.data?.game, "html");
+    if (!isTauri) {
+      const blob = new Blob([html], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      triggerBrowserDownload(url, filename);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      return;
+    }
     const saved = await downloadHtmlToDownloads(html, filename);
     if (!saved) {
       const blob = new Blob([html], { type: "text/html" });
@@ -755,6 +782,8 @@ export default function App() {
   async function downloadPdfToDownloads(pdfUrlOverride, filenameOverride) {
     const targetUrl = pdfUrlOverride || scorecardPdfUrl;
     if (!targetUrl) return false;
+    // In browser mode, skip Tauri-specific save and let caller fall back to window.open/blob handling.
+    if (!isTauri) return false;
     try {
       const res = await fetch(targetUrl);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -786,6 +815,7 @@ export default function App() {
 
   async function downloadHtmlToDownloads(htmlContent, filenameOverride) {
     if (!htmlContent) return false;
+    if (!isTauri) return false;
     try {
       const [{ invoke }, { downloadDir, join }] = await Promise.all([
         import("@tauri-apps/api/core"),
@@ -802,6 +832,35 @@ export default function App() {
     } catch (err) {
       setGameStatus(`Failed to save HTML: ${err.message}`);
       logCall(`HTML download failed: ${err.message}`);
+      return false;
+    }
+  }
+
+  function triggerBrowserDownload(url, filename) {
+    if (!url) return;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename || "";
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  async function browserFetchAndDownload(url, filename) {
+    if (!url) return false;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      triggerBrowserDownload(objectUrl, filename);
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 2000);
+      return true;
+    } catch (err) {
+      setGameStatus(`Failed to download: ${err.message}`);
+      logCall(`Browser download failed: ${err.message}`);
       return false;
     }
   }

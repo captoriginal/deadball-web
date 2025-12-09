@@ -60,6 +60,17 @@ VITE_API_BASE_URL=http://localhost:8000
 - Dev: `cd src-tauri && cargo tauri dev` (uses frontend dev server + backend in the repo).
 - Build: `cd src-tauri && npx @tauri-apps/cli build` (outputs `.app` and `.dmg` under `src-tauri/target/release/bundle/`).
 - The packaged app starts the backend from your repo (`/Users/steve/dev/web/deadball-web/backend`); ensure `.venv` deps are installed (`cd backend && .venv/bin/pip install -r requirements.txt`).
+- Full bundle build flow (macOS):
+  ```bash
+  # from repo root
+  bash scripts/package-backend.sh        # bundles backend into src-tauri/resources/backend-template.tar.gz
+  npm --prefix frontend run build        # or let Tauri run this
+  TAURI_SKIP_DEVSERVER_BUILD=1 cargo tauri build
+  ```
+  Outputs:
+  - `.app`: `src-tauri/target/release/bundle/macos/Deadball Desktop.app`
+  - `.dmg`: `src-tauri/target/release/bundle/dmg/Deadball Desktop_0.1.0_x64.dmg` (requires `hdiutil`; may be unavailable in headless/sandboxed environments)
+  - Zip fallback (if DMG is blocked): `cd src-tauri/target/release/bundle/macos && ditto -c -k --sequesterRsrc --keepParent "Deadball Desktop.app" "../Deadball-Desktop-macos.zip"`
 
 ## More Documentation
 
