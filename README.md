@@ -12,15 +12,22 @@
 
 Monorepo for generating Deadball scorecards from MLB games. Includes a FastAPI backend and a Vite + React + Tailwind frontend.
 
+## Quickstart (fresh clone)
+- Create venv at repo root: `python3.12 -m venv .venv && source .venv/bin/activate`
+- Install backend deps: `pip install -r backend/requirements.txt`
+- Frontend deps: `cd frontend && npm install`
+- Run both: from repo root, `./run_dev.sh` (uses the root venv)
+- Frontend env: `frontend/.env.local` with `VITE_API_BASE_URL=http://localhost:8000`
+
 ## Getting Started
 
 ### Backend
+From repo root:
 ```
-cd backend
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+pip install -r backend/requirements.txt
+uvicorn app.main:app --reload --app-dir backend
 ```
 - Env knobs:
   - `DATABASE_URL` (default sqlite)
@@ -59,7 +66,7 @@ VITE_API_BASE_URL=http://localhost:8000
 ### Desktop app (Tauri)
 - Dev: `cd src-tauri && cargo tauri dev` (uses frontend dev server + backend in the repo).
 - Build: `cd src-tauri && npx @tauri-apps/cli build` (outputs `.app` and `.dmg` under `src-tauri/target/release/bundle/`).
-- The packaged app starts the backend from your repo (`/Users/steve/dev/web/deadball-web/backend`); ensure `.venv` deps are installed (`cd backend && .venv/bin/pip install -r requirements.txt`).
+- The packaged app starts the backend from your repo (prefers repo-root `.venv/bin/python`); ensure `.venv` deps are installed (`.venv/bin/pip install -r backend/requirements.txt` from repo root).
 - Full bundle build flow (macOS):
   ```bash
   # from repo root

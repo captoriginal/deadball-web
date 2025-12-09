@@ -5,13 +5,12 @@ This app wraps the web frontend in a Tauri shell and starts the backend for you 
 ## Prerequisites
 - Rust toolchain (for Tauri)
 - Node.js + npm
-- Python backend deps installed in the repo venv (used to build the bundled copy):
+- Python backend deps installed in the repo-root venv (used to build the bundled copy):
   ```bash
-  cd backend
-  python -m venv .venv
+  python3.12 -m venv .venv
   source .venv/bin/activate
-  pip install -r requirements.txt
-  pip install -e deadball_generator
+  pip install -r backend/requirements.txt
+  pip install -e backend/deadball_generator
   ```
 - Icon source: `src-tauri/icons/icon.png` (already converted to RGBA)
 
@@ -22,7 +21,7 @@ cargo tauri dev
 ```
 This:
 - builds/serves the frontend with Vite (auto-picks an open port)
-- starts the backend (from `/Users/steve/dev/web/deadball-web/backend` if present)
+- starts the backend (from the repo backend if present)
 - opens the desktop window
 
 If the backend path changes, update the backend path logic in `src-tauri/src/main.rs` or add a configurable env var.

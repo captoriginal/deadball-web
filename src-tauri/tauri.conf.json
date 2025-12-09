@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.deadball.desktop",
   "build": {
-    "beforeDevCommand": "npm --prefix /Users/steve/dev/web/deadball-web/frontend run dev -- --host 127.0.0.1 --port 5173",
-    "beforeBuildCommand": "npm --prefix /Users/steve/dev/web/deadball-web/frontend run build",
+    "beforeDevCommand": "npm --prefix ../frontend run dev -- --host 127.0.0.1 --port 5173",
+    "beforeBuildCommand": "npm --prefix ../frontend run build",
     "devUrl": "http://localhost:5173",
     "frontendDist": "../frontend/dist"
   },

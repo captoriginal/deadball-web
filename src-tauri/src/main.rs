@@ -24,16 +24,28 @@ fn log_backend(msg: &str) {
 }
 
 fn python_cmd(backend_dir: &Path) -> PathBuf {
-    // Prefer project venv if present, fallback to python3 in PATH.
-    let venv_python = backend_dir.join(".venv/bin/python");
-    if venv_python.exists() {
-        log_backend(&format!("Using venv python at {}", venv_python.display()));
-        venv_python
-    } else {
-        env::var_os("PYTHON")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("python3"))
+    // Prefer project venvs if present, fallback to python3 in PATH.
+    let repo_root_venv = backend_dir.join("../.venv/bin/python");
+    if repo_root_venv.exists() {
+        log_backend(&format!(
+            "Using repo root venv python at {}",
+            repo_root_venv.display()
+        ));
+        return repo_root_venv;
     }
+
+    let backend_venv = backend_dir.join(".venv/bin/python");
+    if backend_venv.exists() {
+        log_backend(&format!(
+            "Using backend-local venv python at {}",
+            backend_venv.display()
+        ));
+        return backend_venv;
+    }
+
+    env::var_os("PYTHON")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("python3"))
 }
 
 fn spawn_backend(backend_dir: &Path) -> std::io::Result<Child> {
