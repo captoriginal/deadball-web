@@ -893,9 +893,6 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <div className="mx-auto max-w-6xl px-6 py-10 space-y-8">
         <header className="space-y-2">
-          <p className="text-sm uppercase tracking-wide text-indigo-500">
-            Deadball Web
-          </p>
           <h1 className="text-3xl font-semibold sm:text-4xl">
             Generate Deadball Scoresheets from MLB Games
           </h1>
