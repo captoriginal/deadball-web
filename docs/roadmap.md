@@ -17,6 +17,9 @@
 - Frontend UX polish for the main flow:
   - Loading/error states.
   - Make the scorecard view feel like a finished feature.
+- Desktop wrapper (macOS, Tauri):
+  - Scaffold Tauri to wrap the existing frontend build and start the FastAPI backend as a managed child process.
+  - Handle lifecycle: launch backend on app start, bind UI to `http://127.0.0.1:8000`, stop backend on app close.
 - Minimal observability:
   - Basic structured logging around schedule fetch, boxscore fetch, generator invocation.
   - Enough to trace issues when users report “it broke.”

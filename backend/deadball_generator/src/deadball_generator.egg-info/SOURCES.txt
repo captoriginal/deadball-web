@@ -2,7 +2,10 @@ README.md
 pyproject.toml
 src/deadball_generator/__init__.py
 src/deadball_generator/__main__.py
+src/deadball_generator/deadball_api.py
+src/deadball_generator/generator.py
 src/deadball_generator/paths.py
+src/deadball_generator/roster_api.py
 src/deadball_generator.egg-info/PKG-INFO
 src/deadball_generator.egg-info/SOURCES.txt
 src/deadball_generator.egg-info/dependency_links.txt

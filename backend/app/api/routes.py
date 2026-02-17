@@ -534,5 +534,5 @@ def get_scorecard_pdf(
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

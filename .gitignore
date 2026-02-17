@@ -8,12 +8,16 @@ __pycache__/
 node_modules/
 dist/
 frontend/.env.local
+src-tauri/resources/backend-template.tar.gz
+src-tauri/target/
+target/
 
 # Backend env + DB
 backend/.env
 deadball_dev.db
 *.db
 backend/deadball_generator/assets/Deadball Masters of the Game.pdf
+backend/.venv/
 
 # OS/editor cruft
 .DS_Store
