@@ -5,7 +5,7 @@ This app wraps the web frontend in a Tauri shell and starts the backend for you 
 ## Prerequisites
 - Rust toolchain (for Tauri)
 - Node.js + npm
-- Python backend deps installed in the repo-root venv (used to build the bundled copy):
+- Python backend deps installed in a venv (repo-root `.venv` is recommended and auto-bundled as `backend/.venv`):
   ```bash
   python3.12 -m venv .venv
   source .venv/bin/activate
@@ -34,9 +34,12 @@ npx @tauri-apps/cli build
 ```
 Before building, regenerate the bundled backend archive:
 ```bash
+# from repo root
 bash scripts/package-backend.sh
+cd src-tauri
 npx @tauri-apps/cli build
 ```
+`scripts/package-backend.sh` bundles `backend/` and, if present, bundles repo-root `.venv` as `backend/.venv` so the app can start its own backend without relying on an externally running backend.
 Outputs (macOS):
 - `.app`: `src-tauri/target/release/bundle/macos/Deadball Desktop.app`
 - `.dmg`: `src-tauri/target/release/bundle/dmg/Deadball Desktop_0.1.0_x64.dmg` (requires `hdiutil` and a GUI-capable macOS; headless/sandboxed envs may fail)
@@ -46,13 +49,17 @@ Outputs (macOS):
   ditto -c -k --sequesterRsrc --keepParent "Deadball Desktop.app" "../Deadball-Desktop-macos.zip"
   ```
 
-Full one-liner from repo root (macOS):
+Build from repo root (macOS):
 ```bash
-bash scripts/package-backend.sh && TAURI_SKIP_DEVSERVER_BUILD=1 cargo tauri build
+bash scripts/package-backend.sh
+cd src-tauri
+npx @tauri-apps/cli build
 ```
 
 ## Behavior Notes
-- A copy of `backend` (including `.venv` and templates) is bundled to `Resources/backend-template` and copied to the user’s app data dir on first run; the backend then runs from that writable location. Dev mode still prefers the repo backend.
+- A copy of `backend` (and bundled `.venv` when available) is packed into `Resources/backend-template.tar.gz` and copied to the user’s app data dir on first run; the backend then runs from that writable location. Dev mode still allows repo-backend fallbacks.
+- The backend runtime forces `DATABASE_URL` to `<app-data>/backend/deadball_dev.db` so SQLite is always writable in packaged mode.
+- Desktop frontend network calls are proxied through a Rust command that targets `http://127.0.0.1:8000`, avoiding WebView loopback networking inconsistencies.
 - Logs go to stdout; backend helper logs can write to `/tmp/deadball-backend.log`.
 - Download buttons:
   - PDF/HTML downloads save directly to `~/Downloads` in Tauri; browser fallback if native save fails.

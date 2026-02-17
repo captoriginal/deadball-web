@@ -17,7 +17,7 @@ Monorepo for generating Deadball scorecards from MLB games. Includes a FastAPI b
 - Install backend deps: `pip install -r backend/requirements.txt`
 - Frontend deps: `cd frontend && npm install`
 - Run both: from repo root, `./run_dev.sh` (uses the root venv)
-- Frontend env: `frontend/.env.local` with `VITE_API_BASE_URL=http://localhost:8000`
+- Frontend env: `frontend/.env.local` with `VITE_API_BASE_URL=http://127.0.0.1:8000`
 
 ## Getting Started
 
@@ -49,7 +49,7 @@ npm run dev
 
 Create `frontend/.env.local` with:
 ```
-VITE_API_BASE_URL=http://localhost:8000
+VITE_API_BASE_URL=http://127.0.0.1:8000
 ```
 
 ### PDF/HTML scorecards
@@ -66,13 +66,15 @@ VITE_API_BASE_URL=http://localhost:8000
 ### Desktop app (Tauri)
 - Dev: `cd src-tauri && cargo tauri dev` (uses frontend dev server + backend in the repo).
 - Build: `cd src-tauri && npx @tauri-apps/cli build` (outputs `.app` and `.dmg` under `src-tauri/target/release/bundle/`).
-- The packaged app starts the backend from your repo (prefers repo-root `.venv/bin/python`); ensure `.venv` deps are installed (`.venv/bin/pip install -r backend/requirements.txt` from repo root).
+- The packaged app starts its bundled backend copy from app data, and prefers `backend/.venv/bin/python` inside that bundle. `scripts/package-backend.sh` auto-includes repo-root `.venv` as `backend/.venv` in the archive when available.
+- In packaged mode, the backend database is forced to a writable app-data path: `<app-data>/backend/deadball_dev.db`.
+- Tauri frontend calls in desktop mode are proxied through Rust to `127.0.0.1:8000` to avoid WebView loopback networking edge cases.
 - Full bundle build flow (macOS):
   ```bash
   # from repo root
   bash scripts/package-backend.sh        # bundles backend into src-tauri/resources/backend-template.tar.gz
-  npm --prefix frontend run build        # or let Tauri run this
-  TAURI_SKIP_DEVSERVER_BUILD=1 cargo tauri build
+  cd src-tauri
+  npx @tauri-apps/cli build
   ```
   Outputs:
   - `.app`: `src-tauri/target/release/bundle/macos/Deadball Desktop.app`

@@ -1,7 +1,58 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+function parseBackendError(text, status) {
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed?.detail) {
+      return `HTTP ${status}: ${parsed.detail}`;
+    }
+  } catch (err) {
+    // ignore parse errors
+  }
+  return text ? `HTTP ${status}: ${text}` : `HTTP ${status}`;
+}
+
+function errorMessage(err) {
+  if (err && typeof err === "object" && "message" in err && err.message) {
+    return String(err.message);
+  }
+  if (typeof err === "string" && err) {
+    return err;
+  }
+  try {
+    return JSON.stringify(err);
+  } catch (_jsonErr) {
+    return String(err || "Unknown error");
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function tauriBackendRequest(path, { method = "GET", body = null, contentType = null } = {}) {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke("backend_request", { method, path, body, contentType });
+}
+
+async function fetchWithRetry(url, options = {}, { attempts = 6, delayMs = 300 } = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetch(url, options);
+    } catch (err) {
+      lastError = err;
+      if (attempt === attempts) {
+        throw err;
+      }
+      await sleep(delayMs);
+    }
+  }
+  throw lastError;
+}
 
 function Section({ title, children, description }) {
   return (
@@ -19,6 +70,133 @@ function Section({ title, children, description }) {
   );
 }
 
+const TEAM_LOGO_MAP = {
+  arizonadiamondbacks: "arizona-diamondbacks",
+  diamondbacks: "arizona-diamondbacks",
+  ari: "arizona-diamondbacks",
+  atlantabraves: "atlanta-braves",
+  braves: "atlanta-braves",
+  atl: "atlanta-braves",
+  baltimoreorioles: "baltimore-orioles",
+  orioles: "baltimore-orioles",
+  bal: "baltimore-orioles",
+  bostonredsox: "boston-red-sox",
+  redsox: "boston-red-sox",
+  bos: "boston-red-sox",
+  chicagocubs: "chicago-cubs",
+  cubs: "chicago-cubs",
+  chc: "chicago-cubs",
+  chicagowhitesox: "chicago-white-sox",
+  whitesox: "chicago-white-sox",
+  cws: "chicago-white-sox",
+  cincinnatireds: "cincinnati-reds",
+  reds: "cincinnati-reds",
+  cin: "cincinnati-reds",
+  clevelandindians: "cleveland-guardians",
+  indians: "cleveland-guardians",
+  clevelandguardians: "cleveland-guardians",
+  guardians: "cleveland-guardians",
+  cle: "cleveland-guardians",
+  coloradorockies: "colorado-rockies",
+  rockies: "colorado-rockies",
+  col: "colorado-rockies",
+  detroittigers: "detroit-tigers",
+  tigers: "detroit-tigers",
+  det: "detroit-tigers",
+  houstonastros: "houston-astros",
+  astros: "houston-astros",
+  hou: "houston-astros",
+  kansascityroyals: "kansas-city-royals",
+  royals: "kansas-city-royals",
+  kc: "kansas-city-royals",
+  losangelesangels: "los-angeles-angels",
+  laangels: "los-angeles-angels",
+  anaheimangels: "los-angeles-angels",
+  angels: "los-angeles-angels",
+  laa: "los-angeles-angels",
+  losangelesdodgers: "los-angeles-dodgers",
+  ladodgers: "los-angeles-dodgers",
+  dodgers: "los-angeles-dodgers",
+  lad: "los-angeles-dodgers",
+  miamimarlins: "miami-marlins",
+  marlins: "miami-marlins",
+  mia: "miami-marlins",
+  milwaukeebrewers: "milwaukee-brewers",
+  brewers: "milwaukee-brewers",
+  mil: "milwaukee-brewers",
+  minnesotatwins: "minnesota-twins",
+  twins: "minnesota-twins",
+  min: "minnesota-twins",
+  newyorkmets: "new-york-mets",
+  mets: "new-york-mets",
+  nym: "new-york-mets",
+  newyorkyankees: "new-york-yankees",
+  yankees: "new-york-yankees",
+  nyy: "new-york-yankees",
+  oaklandathletics: "oakland-athletics",
+  athletics: "oakland-athletics",
+  oak: "oakland-athletics",
+  philadelphiaphillies: "philadelphia-phillies",
+  phillies: "philadelphia-phillies",
+  phi: "philadelphia-phillies",
+  pittsburghpirates: "pittsburgh-pirates",
+  pirates: "pittsburgh-pirates",
+  pit: "pittsburgh-pirates",
+  sandiegopadres: "san-diego-padres",
+  padres: "san-diego-padres",
+  sdp: "san-diego-padres",
+  sanfranciscogiants: "san-francisco-giants",
+  giants: "san-francisco-giants",
+  sf: "san-francisco-giants",
+  seamariners: "seattle-mariners",
+  seattlemariners: "seattle-mariners",
+  mariners: "seattle-mariners",
+  sea: "seattle-mariners",
+  stlouiscardinals: "st-louis-cardinals",
+  stlouis: "st-louis-cardinals",
+  cardinals: "st-louis-cardinals",
+  stl: "st-louis-cardinals",
+  tampabayrays: "tampa-bay-rays",
+  rays: "tampa-bay-rays",
+  tbr: "tampa-bay-rays",
+  texasrangers: "texas-rangers",
+  texasarangers: "texas-rangers",
+  rangers: "texas-rangers",
+  tex: "texas-rangers",
+  torontobluejays: "toronto-blue-jays",
+  bluejays: "toronto-blue-jays",
+  tor: "toronto-blue-jays",
+  washingtonnationals: "washington-nationals",
+  nationals: "washington-nationals",
+  was: "washington-nationals",
+};
+
+function normalizeTeamKey(name) {
+  return (name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function logoKeyForTeam(name) {
+  const key = normalizeTeamKey(name);
+  return TEAM_LOGO_MAP[key] || null;
+}
+
+function logoUrlForTeam(name) {
+  const key = logoKeyForTeam(name);
+  return key ? `/logos/${key}.svg` : null;
+}
+
+function teamInitials(name) {
+  if (!name) return "";
+  const words = String(name)
+    .replace(/[^A-Za-z0-9 ]/g, " ")
+    .split(" ")
+    .filter(Boolean);
+  if (words.length === 1) {
+    return words[0].slice(0, 2).toUpperCase();
+  }
+  return (words[0][0] + (words[1]?.[0] || "")).toUpperCase();
+}
+
 export default function App() {
   const [date, setDate] = useState("");
   const [games, setGames] = useState([]);
@@ -27,7 +205,8 @@ export default function App() {
   const [selectedGame, setSelectedGame] = useState(null);
   const [forceGenerate, setForceGenerate] = useState(false);
   const [gameResult, setGameResult] = useState(null);
-  const [gameStatus, setGameStatus] = useState(null);
+  const [actionStatus, setActionStatus] = useState({ gameId: null, message: "", tone: "info" });
+  const [loadingAction, setLoadingAction] = useState({ gameId: null, kind: null });
   const [callLog, setCallLog] = useState([]);
   const [scorecardHtml, setScorecardHtml] = useState("");
   const [scorecardPdfUrl, setScorecardPdfUrl] = useState("");
@@ -165,6 +344,38 @@ export default function App() {
       }
     }
     return byTeam;
+  }
+
+  function Spinner({ className, variant = "light" }) {
+    const toneClass =
+      variant === "dark" ? "border-slate-400 border-t-slate-700" : "border-white/60 border-t-white";
+    return (
+      <span
+        aria-hidden="true"
+        className={`inline-block h-4 w-4 animate-spin rounded-full border-2 ${toneClass} ${className || ""}`}
+      />
+    );
+  }
+
+  function TeamLogo({ name }) {
+    const [errored, setErrored] = useState(false);
+    const logoUrl = !errored ? logoUrlForTeam(name) : null;
+    const initials = teamInitials(name);
+    return (
+      <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded border border-slate-200 bg-white text-slate-700">
+        {logoUrl ? (
+          <img
+            src={logoUrl}
+            alt={`${name || "Team"} logo`}
+            loading="lazy"
+            className="h-full w-full object-contain"
+            onError={() => setErrored(true)}
+          />
+        ) : (
+          <span className="text-xs font-semibold">{initials}</span>
+        )}
+      </div>
+    );
   }
 
   function buildTableRows(hitters) {
@@ -564,15 +775,26 @@ export default function App() {
       setGamesStatusTone("warning");
       return;
     }
+    setActionStatus({ gameId: null, message: "", tone: "info" });
     setGamesStatus("Loading...");
     setGamesStatusTone("info");
     logCall(`Fetching games for ${date} from backend`);
     setGameResult(null);
     setSelectedGame(null);
     try {
-      const res = await fetch(`${API_BASE}/api/games?date=${date}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      let data;
+      if (isTauri) {
+        const proxied = await tauriBackendRequest(`/api/games?date=${encodeURIComponent(date)}`);
+        const text = new TextDecoder().decode(new Uint8Array(proxied.body || []));
+        if (proxied.status < 200 || proxied.status >= 300) {
+          throw new Error(parseBackendError(text, proxied.status));
+        }
+        data = JSON.parse(text || "{}");
+      } else {
+        const res = await fetchWithRetry(`${API_BASE}/api/games?date=${date}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        data = await res.json();
+      }
       const items = data.items || [];
       setGames(items);
       if (items.length === 0) {
@@ -591,15 +813,16 @@ export default function App() {
         logCall(`Backend served cached games for ${date}`);
       }
     } catch (err) {
-      setGamesStatus(`Error loading games: ${err.message}`);
+      const message = errorMessage(err);
+      setGamesStatus(`Error loading games: ${message}`);
       setGamesStatusTone("error");
       setGames([]);
-      logCall(`Failed to fetch games: ${err.message}`);
+      logCall(`Failed to fetch games: ${message}`);
     }
   }
 
   async function generateGame(gameId, { scrollToScorecard: doScroll = true } = {}) {
-    setGameStatus("Generating...");
+    setActionStatus({ gameId, message: "Generating...", tone: "info" });
     logCall(`Requesting game generate for ${gameId} (force=${forceGenerate})`);
     setGameResult(null);
     setScorecardHtml("<p style='font-family:Arial;padding:16px;'>Generating scorecard...</p>");
@@ -607,24 +830,42 @@ export default function App() {
     setPdfFieldMapping([]);
     setPendingScrollScorecard(doScroll);
     try {
-      const res = await fetch(`${API_BASE}/api/games/${gameId}/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ force: forceGenerate }),
-      });
-      if (!res.ok) {
-        let detail = "";
-        try {
-          const errJson = await res.json();
-          detail = errJson.detail || "";
-        } catch (err) {
-          detail = "";
+      let data;
+      if (isTauri) {
+        const proxied = await tauriBackendRequest(`/api/games/${encodeURIComponent(gameId)}/generate`, {
+          method: "POST",
+          body: JSON.stringify({ force: forceGenerate }),
+          contentType: "application/json",
+        });
+        const text = new TextDecoder().decode(new Uint8Array(proxied.body || []));
+        if (proxied.status < 200 || proxied.status >= 300) {
+          throw new Error(parseBackendError(text, proxied.status));
         }
-        throw new Error(detail ? `HTTP ${res.status}: ${detail}` : `HTTP ${res.status}`);
+        data = JSON.parse(text || "{}");
+      } else {
+        const res = await fetch(`${API_BASE}/api/games/${gameId}/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ force: forceGenerate }),
+        });
+        if (!res.ok) {
+          let detail = "";
+          try {
+            const errJson = await res.json();
+            detail = errJson.detail || "";
+          } catch (err) {
+            detail = "";
+          }
+          throw new Error(detail ? `HTTP ${res.status}: ${detail}` : `HTTP ${res.status}`);
+        }
+        data = await res.json();
       }
-      const data = await res.json();
       setGameResult(data);
-      setGameStatus(data.cached ? "Served from cache" : "Generated fresh");
+      setActionStatus({
+        gameId,
+        message: data.cached ? "Served from cache" : "Generated fresh",
+        tone: "info",
+      });
       logCall(data.cached ? `Backend served cached game ${gameId}` : `Backend generated game ${gameId} (may have fetched boxscore)`);
       const html = renderScorecardFromStats(data);
       if (doScroll) {
@@ -639,14 +880,15 @@ export default function App() {
       } catch (err) {
         // Avoid breaking the flow if mapping fails
         setPdfFieldMapping([]);
-        logCall(`Failed to build PDF mapping: ${err.message}`);
+        logCall(`Failed to build PDF mapping: ${errorMessage(err)}`);
       }
       return { data, pdfUrl, html };
     } catch (err) {
-      setGameStatus(`Error generating game: ${err.message}`);
+      const message = errorMessage(err);
+      setActionStatus({ gameId, message: `Error generating game: ${message}`, tone: "error" });
       setGameResult(null);
-      logCall(`Game generate failed for ${gameId}: ${err.message}`);
-      setScorecardHtml(`<p style='font-family:Arial;padding:16px;'>Error: ${escapeHtml(err.message || "Unknown error")}</p>`);
+      logCall(`Game generate failed for ${gameId}: ${message}`);
+      setScorecardHtml(`<p style='font-family:Arial;padding:16px;'>Error: ${escapeHtml(message)}</p>`);
       if (doScroll) {
         scrollToScorecard();
       }
@@ -722,7 +964,7 @@ export default function App() {
     if (!scorecardPdfUrl) return;
     // Try native save first; fall back to browser.
     void (async () => {
-      const saved = await downloadPdfToDownloads();
+      const saved = await downloadPdfToDownloads(undefined, undefined, selectedGame);
       if (!saved) {
         await openExternal(scorecardPdfUrl);
       }
@@ -740,60 +982,81 @@ export default function App() {
 
   async function handleDownloadPdf(gameId) {
     setSelectedGame(gameId);
-    const result = await generateGame(gameId, { scrollToScorecard: false });
-    if (!result?.pdfUrl) return;
-    const filename = buildScorecardFilename(result.data?.game, "pdf");
-    // In the browser, trigger a download directly to avoid popup blockers.
-    if (!isTauri) {
-      const ok = await browserFetchAndDownload(result.pdfUrl, filename);
-      if (ok) {
-        setGameStatus(`Downloaded ${filename}`);
+    setLoadingAction({ gameId, kind: "pdf" });
+    setActionStatus({ gameId, message: "Generating...", tone: "info" });
+    try {
+      const result = await generateGame(gameId, { scrollToScorecard: false });
+      if (!result?.pdfUrl) return;
+      const filename = buildScorecardFilename(result.data?.game, "pdf");
+      // In the browser, trigger a download directly to avoid popup blockers.
+      if (!isTauri) {
+        const ok = await browserFetchAndDownload(result.pdfUrl, filename);
+        if (ok) {
+          setActionStatus({ gameId, message: `Downloaded ${filename}`, tone: "info" });
+        }
+        return;
       }
-      return;
-    }
-    const saved = await downloadPdfToDownloads(result.pdfUrl, filename);
-    if (!saved) {
-      await openExternal(result.pdfUrl);
+      const saved = await downloadPdfToDownloads(result.pdfUrl, filename, gameId);
+      if (!saved) {
+        await openExternal(result.pdfUrl);
+      }
+    } catch (err) {
+      setActionStatus({ gameId, message: `Failed to download: ${errorMessage(err)}`, tone: "error" });
+    } finally {
+      setLoadingAction({ gameId: null, kind: null });
     }
   }
 
   async function handleDownloadHtml(gameId) {
     setSelectedGame(gameId);
-    const result = await generateGame(gameId, { scrollToScorecard: false });
-    const html = result?.html || scorecardHtml;
-    if (!html) return;
-    const filename = buildScorecardFilename(result.data?.game, "html");
-    if (!isTauri) {
-      const blob = new Blob([html], { type: "text/html" });
-      const url = URL.createObjectURL(blob);
-      triggerBrowserDownload(url, filename);
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
-      return;
-    }
-    const saved = await downloadHtmlToDownloads(html, filename);
-    if (!saved) {
-      const blob = new Blob([html], { type: "text/html" });
-      const url = URL.createObjectURL(blob);
-      await openExternal(url);
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setLoadingAction({ gameId, kind: "html" });
+    setActionStatus({ gameId, message: "Generating...", tone: "info" });
+    try {
+      const result = await generateGame(gameId, { scrollToScorecard: false });
+      const html = result?.html || scorecardHtml;
+      if (!html) return;
+      const filename = buildScorecardFilename(result.data?.game, "html");
+      if (!isTauri) {
+        const blob = new Blob([html], { type: "text/html" });
+        const url = URL.createObjectURL(blob);
+        triggerBrowserDownload(url, filename);
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        setActionStatus({ gameId, message: `Downloaded ${filename}`, tone: "info" });
+        return;
+      }
+      const saved = await downloadHtmlToDownloads(html, filename, gameId);
+      if (!saved) {
+        const blob = new Blob([html], { type: "text/html" });
+        const url = URL.createObjectURL(blob);
+        await openExternal(url);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+    } catch (err) {
+      setActionStatus({ gameId, message: `Failed to download: ${errorMessage(err)}`, tone: "error" });
+    } finally {
+      setLoadingAction({ gameId: null, kind: null });
     }
   }
 
-  async function downloadPdfToDownloads(pdfUrlOverride, filenameOverride) {
+  async function downloadPdfToDownloads(pdfUrlOverride, filenameOverride, gameId) {
     const targetUrl = pdfUrlOverride || scorecardPdfUrl;
     if (!targetUrl) return false;
+    const statusGameId = gameId || selectedGame;
     // In browser mode, skip Tauri-specific save and let caller fall back to window.open/blob handling.
     if (!isTauri) return false;
     try {
-      const res = await fetch(targetUrl);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const arrayBuffer = await res.arrayBuffer();
+      const target = new URL(targetUrl);
+      const proxied = await tauriBackendRequest(`${target.pathname}${target.search}`, { method: "GET" });
+      if (proxied.status < 200 || proxied.status >= 300) {
+        const text = new TextDecoder().decode(new Uint8Array(proxied.body || []));
+        throw new Error(parseBackendError(text, proxied.status));
+      }
       const [{ invoke }, { downloadDir, join }] = await Promise.all([
         import("@tauri-apps/api/core"),
         import("@tauri-apps/api/path"),
       ]);
 
-      const cd = res.headers.get("content-disposition") || "";
+      const cd = proxied.content_disposition || "";
       const filenameMatch = cd.match(/filename\*?=(?:UTF-8'')?"?([^";]+)/i);
       const filename = filenameMatch?.[1] || filenameOverride || "deadball-scorecard.pdf";
       const downloads = await downloadDir();
@@ -801,21 +1064,23 @@ export default function App() {
       await invoke("save_scorecard_pdf", {
         path: filePath,
         // Convert to a plain array for serde
-        bytes: Array.from(new Uint8Array(arrayBuffer)),
+        bytes: Array.from(proxied.body || []),
       });
-      setGameStatus(`Saved scorecard to ${filePath}`);
+      setActionStatus({ gameId: statusGameId, message: `Saved scorecard to ${filePath}`, tone: "info" });
       logCall(`Saved scorecard to ${filePath}`);
       return true;
     } catch (err) {
-      setGameStatus(`Failed to save PDF: ${err.message}`);
-      logCall(`PDF download failed: ${err.message}`);
+      const message = errorMessage(err);
+      setActionStatus({ gameId: statusGameId, message: `Failed to save PDF: ${message}`, tone: "error" });
+      logCall(`PDF download failed: ${message}`);
       return false;
     }
   }
 
-  async function downloadHtmlToDownloads(htmlContent, filenameOverride) {
+  async function downloadHtmlToDownloads(htmlContent, filenameOverride, gameId) {
     if (!htmlContent) return false;
     if (!isTauri) return false;
+    const statusGameId = gameId || selectedGame;
     try {
       const [{ invoke }, { downloadDir, join }] = await Promise.all([
         import("@tauri-apps/api/core"),
@@ -826,12 +1091,13 @@ export default function App() {
       const downloads = await downloadDir();
       const filePath = await join(downloads, filenameOverride || "deadball-scorecard.html");
       await invoke("save_scorecard_pdf", { path: filePath, bytes });
-      setGameStatus(`Saved HTML scorecard to ${filePath}`);
+      setActionStatus({ gameId: statusGameId, message: `Saved HTML scorecard to ${filePath}`, tone: "info" });
       logCall(`Saved HTML scorecard to ${filePath}`);
       return true;
     } catch (err) {
-      setGameStatus(`Failed to save HTML: ${err.message}`);
-      logCall(`HTML download failed: ${err.message}`);
+      const message = errorMessage(err);
+      setActionStatus({ gameId: statusGameId, message: `Failed to save HTML: ${message}`, tone: "error" });
+      logCall(`HTML download failed: ${message}`);
       return false;
     }
   }
@@ -859,8 +1125,9 @@ export default function App() {
       setTimeout(() => URL.revokeObjectURL(objectUrl), 2000);
       return true;
     } catch (err) {
-      setGameStatus(`Failed to download: ${err.message}`);
-      logCall(`Browser download failed: ${err.message}`);
+      const message = errorMessage(err);
+      setActionStatus({ gameId: selectedGame, message: `Failed to download: ${message}`, tone: "error" });
+      logCall(`Browser download failed: ${message}`);
       return false;
     }
   }
@@ -901,7 +1168,7 @@ export default function App() {
         <div className="grid gap-6">
           <Section
             title="Games by Date"
-            description="Pick a date to list games, then generate Deadball stats/game for a selection."
+            description="Pick a date to list games, then generate a Deadball scoresheet for a selection."
           >
             <div className="flex flex-wrap items-center gap-3">
               <input
@@ -937,49 +1204,84 @@ export default function App() {
                   No games loaded yet. Choose a date and click Load.
                 </p>
               ) : (
-                games.map((g) => (
-                  <div
-                    key={g.game_id}
-                    className={`flex items-center justify-between rounded border px-3 py-2 text-sm ${
-                      selectedGame === g.game_id
-                        ? "border-indigo-400 bg-indigo-50"
-                        : "border-slate-200 bg-white"
-                    }`}
-                  >
-                    <div>
-                      <p className="font-medium">
-                        {g.away_team} @ {g.home_team}
-                      </p>
-                      <p className="text-xs text-slate-600">
-                        {g.description || g.game_id}
-                      </p>
+                games.map((g) => {
+                  const isBusy = loadingAction.gameId === g.game_id;
+                  const pdfLoading = isBusy && loadingAction.kind === "pdf";
+                  const htmlLoading = isBusy && loadingAction.kind === "html";
+                  return (
+                    <div
+                      key={g.game_id}
+                      className={`flex items-start justify-between rounded border px-3 py-2 text-sm ${
+                        selectedGame === g.game_id
+                          ? "border-indigo-400 bg-indigo-50"
+                          : "border-slate-200 bg-white"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2">
+                          <TeamLogo name={g.away_team} />
+                          <TeamLogo name={g.home_team} />
+                        </div>
+                        <div>
+                          <p className="font-medium">
+                            {g.away_team} @ {g.home_team}
+                          </p>
+                          <p className="text-xs text-slate-600">
+                            {g.description || g.game_id}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-end gap-1">
+                        <div className="flex items-center gap-2">
+                          {debugMode && (
+                            <label className="flex items-center gap-1 text-xs text-slate-600">
+                              <input
+                                type="checkbox"
+                                checked={forceGenerate}
+                                onChange={(e) => setForceGenerate(e.target.checked)}
+                                disabled={isBusy}
+                              />
+                              Force
+                            </label>
+                          )}
+                          <button
+                            onClick={() => handleDownloadPdf(g.game_id)}
+                            disabled={isBusy}
+                            className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:bg-indigo-600"
+                          >
+                            <span className="flex items-center gap-2">
+                              {pdfLoading && <Spinner />}
+                              <span>{pdfLoading ? "Generating..." : "Download PDF"}</span>
+                            </span>
+                          </button>
+                          <button
+                            onClick={() => handleDownloadHtml(g.game_id)}
+                            disabled={isBusy}
+                            className="rounded border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-800 hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <span className="flex items-center gap-2">
+                              {htmlLoading && <Spinner variant="dark" />}
+                              <span>{htmlLoading ? "Generating..." : "Download HTML"}</span>
+                            </span>
+                          </button>
+                        </div>
+                        {actionStatus.gameId === g.game_id && actionStatus.message ? (
+                          <p
+                            className={`text-xs ${
+                              actionStatus.tone === "error"
+                                ? "text-red-600"
+                                : actionStatus.tone === "warning"
+                                ? "text-orange-600"
+                                : "text-slate-600"
+                            }`}
+                          >
+                            {actionStatus.message}
+                          </p>
+                        ) : null}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      {debugMode && (
-                        <label className="flex items-center gap-1 text-xs text-slate-600">
-                          <input
-                            type="checkbox"
-                            checked={forceGenerate}
-                            onChange={(e) => setForceGenerate(e.target.checked)}
-                          />
-                          Force
-                        </label>
-                      )}
-                      <button
-                        onClick={() => handleDownloadPdf(g.game_id)}
-                        className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-700"
-                      >
-                        Download PDF
-                      </button>
-                      <button
-                        onClick={() => handleDownloadHtml(g.game_id)}
-                        className="rounded border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-800 hover:border-slate-400"
-                      >
-                        Download HTML
-                      </button>
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
 
@@ -1016,33 +1318,6 @@ export default function App() {
             )}
           </Section>
         </div>
-        {scorecardHtml ? (
-          <section ref={scorecardSectionRef} className="rounded-2xl border border-slate-200 bg-white/70 p-4 shadow-sm">
-            <h2 className="text-sm font-semibold text-slate-900 mb-3">{formatScorecardTitle()}</h2>
-            {gameStatus && (
-              <p className="mb-3 text-sm text-slate-700">{gameStatus}</p>
-            )}
-            {scorecardPdfUrl ? (
-              <div className="mb-3">
-                {/* Download buttons now live next to each game in the list */}
-                {debugMode && Array.isArray(pdfFieldMapping) && pdfFieldMapping.length > 0 && (
-                  <div className="mt-2 rounded border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
-                    <div className="font-semibold text-slate-900 mb-1">PDF Field Mapping (values)</div>
-                    <div className="max-h-48 overflow-auto space-y-1">
-                      {pdfFieldMapping.map((m, idx) => (
-                        <div key={idx} className="flex items-start gap-2">
-                          <span className="font-mono text-slate-800">{m.field}</span>
-                          <span className="text-slate-600">=</span>
-                          <span className="text-slate-800">{m.value || ""}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : null}
-          </section>
-        ) : null}
         {debugMode && (
           <section className="rounded-2xl border border-slate-200 bg-white/70 p-4 shadow-sm">
             <div className="flex items-center justify-between">
