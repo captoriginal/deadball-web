@@ -16,7 +16,7 @@ fi
 
 # Start backend on http://localhost:8000
 echo "Starting backend on http://localhost:8000 ..."
-"$ROOT_DIR/.venv/bin/uvicorn" app.main:app --reload --app-dir backend &
+PYTHONUNBUFFERED=1 "$ROOT_DIR/.venv/bin/uvicorn" app.main:app --reload --app-dir backend --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
 
 # Start frontend on http://localhost:5173

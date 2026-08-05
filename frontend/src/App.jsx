@@ -813,11 +813,14 @@ export default function App() {
         logCall(`Backend served cached games for ${date}`);
       }
     } catch (err) {
-      const message = errorMessage(err);
-      setGamesStatus(`Error loading games: ${message}`);
+      const isNetworkErr = err.message === "Load failed" || err.message === "Failed to fetch" || err.name === "TypeError";
+      const errMsg = isNetworkErr
+        ? `Cannot connect to backend (${API_BASE}). Ensure the backend server is running.`
+        : err.message;
+      setGamesStatus(`Error loading games: ${errMsg}`);
       setGamesStatusTone("error");
       setGames([]);
-      logCall(`Failed to fetch games: ${message}`);
+      logCall(`Failed to fetch games: ${errMsg}`);
     }
   }
 

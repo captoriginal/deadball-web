@@ -27,7 +27,7 @@ From repo root:
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r backend/requirements.txt
-uvicorn app.main:app --reload --app-dir backend
+uvicorn app.main:app --reload --app-dir backend --host 0.0.0.0 --port 8000
 ```
 - Env knobs:
   - `DATABASE_URL` (default sqlite)
@@ -91,3 +91,16 @@ VITE_API_BASE_URL=http://127.0.0.1:8000
 - [Desktop (Tauri)](docs/desktop.md)
 
 Note: the bundled backend archive (`src-tauri/resources/backend-template.tar.gz`) is git-ignored; regenerate it with `bash scripts/package-backend.sh` before running a desktop build.
+
+## Troubleshooting
+
+### "Error loading games: Cannot connect to backend" or "bad interpreter"
+If the backend fails to start (or `./run_dev.sh` prints a `bad interpreter: No such file or directory` error), it usually means your system Python was updated (e.g., via Homebrew) and broke the virtual environment.
+
+**Fix:** Delete and recreate the `.venv`:
+```bash
+rm -rf .venv
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r backend/requirements.txt
+```
