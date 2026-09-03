@@ -39,7 +39,7 @@ The exact paths may differ after Phase 0 inspects the current repository. The im
 
 Keeping these components in one repository avoids unnecessary package-publication and cross-repository coordination overhead. The boundaries should nevertheless remain clean enough that `deadball_core` or `deadball_play` could be extracted later if useful.
 
-Current status: **Phase 2 deterministic empty-bases at-bat complete**
+Current status: **Phase 6 bunting and hit-and-run complete**
 
 The existing Deadball team/game generator already produces Deadball player ratings from MLB data. The next major development goal is a standalone rules engine that can conduct a complete Modern Era Second Edition game from first pitch to final out.
 
@@ -165,6 +165,10 @@ Core project documents:
 - [`phase-0-review.md`](phase-0-review.md) — repository findings and established package boundaries
 - [`phase-1-review.md`](phase-1-review.md) — implemented game-data contract, initial state, and compatibility notes
 - [`phase-2-review.md`](phase-2-review.md) — deterministic empty-bases Swing resolution and test coverage
+- [`phase-3-review.md`](phase-3-review.md) — Modern Hit Table, traits, critical hits, and DEF resolution
+- [`phase-4-review.md`](phase-4-review.md) — runner advancement, productive outs, and scoring
+- [`phase-5-review.md`](phase-5-review.md) — single steals, double steals, traits, and legal actions
+- [`phase-6-review.md`](phase-6-review.md) — Bunting and Hit & Run tables with complete state transitions
 - [`generator-backlog.md`](generator-backlog.md) — deferred generator and contract-integration work
 
 ## Guiding Principles

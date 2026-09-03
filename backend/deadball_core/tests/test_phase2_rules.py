@@ -135,34 +135,17 @@ def test_bottom_third_out_starts_next_inning_and_lineup_wraps():
     assert result.new_state.home.batting_order_index == 0
 
 
-@pytest.mark.parametrize(
-    ("swing", "pitch", "event_type", "mss"),
-    [
-        (24, 6, "ordinary_hit", 30),
-        (34, 6, "possible_error", 40),
-    ],
-)
-def test_unfinished_table_paths_leave_state_unchanged(swing, pitch, event_type, mss):
-    state = initial_state()
-    result = resolve_swing(state, FixedDice([swing, pitch]))
-
-    assert result.event.event_type == event_type
-    assert result.event.resolved is False
-    assert result.new_state is state
-    assert result.dice.mss == mss
-
-
 def test_possible_error_event_identifies_special_zero_digit_fielder():
-    result = resolve_swing(initial_state(), FixedDice([34, 6]))  # MSS 40
+    result = resolve_swing(initial_state(), FixedDice([34, 6, 3]))  # MSS 40
 
-    assert result.event.event_type == "possible_error"
+    assert result.event.event_type == "groundout"
     assert result.event.fielded_by == "SS"
 
 
 def test_resolver_applies_same_handed_adjustment_before_rolling():
     state = initial_state()
     state = replace(state, away=replace(state.away, batting_order_index=1))
-    result = resolve_swing(state, FixedDice([30, 12]))
+    result = resolve_swing(state, FixedDice([30, 12, 3]))
 
     assert result.dice.pitch_die == "d12"
     assert result.dice.mss == 42
@@ -182,7 +165,7 @@ def test_enabled_oddity_is_pending_without_advancing_state():
 def test_negative_pitch_die_is_subtracted():
     state = initial_state()
     state = replace(state, home=replace(state.home, active_pitch_die="-d8"))
-    result = resolve_swing(state, FixedDice([50, 6]))
+    result = resolve_swing(state, FixedDice([50, 6, 3]))
 
     assert result.dice.signed_pitch_value == -6
     assert result.dice.mss == 44

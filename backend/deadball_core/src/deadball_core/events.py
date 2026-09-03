@@ -14,6 +14,38 @@ class DiceRecord:
     pitch_die_roll: int
     signed_pitch_value: int
     mss: int
+    hit_table_roll: int | None = None
+    modified_hit_table_roll: int | None = None
+    defense_roll: int | None = None
+    modified_defense_roll: int | None = None
+
+
+@dataclass(frozen=True)
+class StealDiceRecord:
+    action: str
+    roll: int
+    runner_modifier: int
+    base_modifier: int
+    catcher_modifier: int
+    modified_roll: int
+
+
+@dataclass(frozen=True)
+class BuntDiceRecord:
+    roll: int
+    batter_modifier: int
+    modified_roll: int
+    defense_roll: int | None = None
+    modified_defense_roll: int | None = None
+
+
+@dataclass(frozen=True)
+class HitAndRunDiceRecord:
+    steal: StealDiceRecord
+    swing: DiceRecord
+    target_bonus: int
+    adjusted_bt: int
+    adjusted_obt: int
 
 
 @dataclass(frozen=True)
@@ -21,6 +53,15 @@ class RuleTraceEntry:
     stage: str
     detail: str
     rule_reference: str
+
+
+@dataclass(frozen=True)
+class RunnerMove:
+    runner_id: str
+    from_base: str
+    to_base: str | None = None
+    scored: bool = False
+    out: bool = False
 
 
 @dataclass(frozen=True)
@@ -34,11 +75,26 @@ class PlayEvent:
     batter_destination: str | None = None
     fielded_by: str | None = None
     scoring_notation: str | None = None
+    hit_type: str | None = None
+    defense_outcome: str | None = None
+    runner_moves: tuple[RunnerMove, ...] = ()
+    runs_scored: int = 0
+
+
+@dataclass(frozen=True)
+class StealEvent:
+    event_type: str
+    action: str
+    resolved: bool
+    runner_moves: tuple[RunnerMove, ...]
+    outs_added: int = 0
+    runs_scored: int = 0
+    scoring_notation: str | None = None
 
 
 @dataclass(frozen=True)
 class ActionResult:
-    event: PlayEvent
+    event: PlayEvent | StealEvent
     new_state: GameState
-    dice: DiceRecord
+    dice: DiceRecord | StealDiceRecord | BuntDiceRecord | HitAndRunDiceRecord
     rule_trace: tuple[RuleTraceEntry, ...]
