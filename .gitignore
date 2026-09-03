@@ -22,3 +22,6 @@ backend/.venv/
 # OS/editor cruft
 .DS_Store
 .vscode/
+
+# Local licensed reference material
+docs/deadball-play-docs/Deadball_Second_Edition_Rulebook.pdf

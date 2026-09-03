@@ -7,6 +7,10 @@ The generator lives in `backend/deadball_generator/` and mirrors the upstream pr
 - Uses `deadball_generator.cli.game.build_deadball_for_game` and `team_code_from_name`.
 - Inputs: MLB boxscore JSON (string), game id, game date, home/away team names/codes.
 - Outputs: `{ "players": [...], "teams": {...} }` (as JSON string) plus CSV (`game_text`).
+- Player positions preserve the first-played position from MLB `allPositions`;
+  the top-level boxscore position may reflect a later substitution.
+- Pitcher rows include `GameStarted`, allowing downstream consumers to identify
+  the actual starter without relying on roster order.
 - Strict: raises errors if raw stats can’t be parsed, team code is unknown, or generator returns no rows. No stub fallbacks.
 
 ## Frontend usage

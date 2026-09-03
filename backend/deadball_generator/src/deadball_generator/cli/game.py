@@ -439,6 +439,9 @@ def mlb_batting_order(raw: str | None) -> tuple[str | None, float]:
 def mlb_positions(player_entry: dict, default: str = "") -> tuple[str, str]:
     """
     Return (primary, comma-separated) positions from an MLB Stats API player entry.
+
+    MLB's top-level position can reflect the final position after substitutions.
+    The first allPositions entry preserves the starting/first-played position.
     """
     positions = player_entry.get("allPositions") or []
     abbrs: list[str] = []
@@ -449,12 +452,11 @@ def mlb_positions(player_entry: dict, default: str = "") -> tuple[str, str]:
         if pos_code not in abbrs:
             abbrs.append(pos_code)
 
-    # Prefer the declared position (e.g., DH for Ohtani) before the allPositions list.
-    pos = player_entry.get("position", {})
-    _add(pos.get("abbreviation") or pos.get("code"))
-
     for p in positions:
         _add(p.get("abbreviation") or p.get("code"))
+
+    pos = player_entry.get("position", {})
+    _add(pos.get("abbreviation") or pos.get("code"))
 
     if not abbrs:
         return default, default
@@ -852,6 +854,7 @@ def build_deadball_for_game(
                 "BB/9": source.get("BB/9"),
                 "GB%": source.get("GB%"),
                 "GS": source.get("GS"),
+                "GameStarted": bool(pit_stats.get("gamesStarted")),
                 "Traits": source.get("Traits", ""),
                 **{key: source.get(key) for key in RATING_METADATA},
             }

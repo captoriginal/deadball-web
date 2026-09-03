@@ -249,6 +249,19 @@ def test_pitcher_metadata_and_role_survive(tmp_path, monkeypatch):
         assert result.iloc[0][key] == source[key]
 
 
+def test_game_rows_preserve_starting_position_and_pitcher(tmp_path, monkeypatch):
+    hitter = player()
+    hitter["position"] = {"abbreviation": "RF"}
+    hitter["allPositions"] = [{"abbreviation": "LF"}, {"abbreviation": "RF"}]
+    pitcher = player(pitching=True)
+    pitcher["stats"]["pitching"]["gamesStarted"] = 1
+
+    result = build_box(tmp_path, monkeypatch, [hitter, pitcher], [])
+
+    assert result[result.Type == "Hitter"].iloc[0].Pos == "LF"
+    assert bool(result[result.Type == "Pitcher"].iloc[0].GameStarted) is True
+
+
 def test_missing_player_recovers_cached_career_offline(tmp_path, monkeypatch):
     cache_dir = team_stats.CACHE_ROOT / "career"
     cache_dir.mkdir(parents=True)
