@@ -1,7 +1,7 @@
 """
 Fetch season or postseason batting/pitching stats for a given MLB team and season.
 
-Regular season: pulls Fangraphs team batting/pitching and merges fielding FP%.
+Regular season: pulls Fangraphs stats, falling back to MLB season totals.
 Postseason: aggregates MLB Stats API boxscore data for team totals.
 
 Outputs:
@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import time
 import unicodedata
 from pathlib import Path
 from typing import Optional, Sequence
+from urllib.parse import urlencode
 
 import pandas as pd
 import requests
@@ -680,6 +682,8 @@ def retro_team_to_br(retro_code: str) -> str:
 def merge_fp(batting: pd.DataFrame, team: str, season: int, rate_limit_seconds: float = 0.0) -> pd.DataFrame:
     if "FP" in batting.columns and batting["FP"].notna().any():
         return batting
+    if "IDfg" not in batting.columns or not batting["IDfg"].notna().any():
+        return batting
     try:
         _announce_request(f"Fangraphs fielding (FP%) for {team} {season}", rate_limit_seconds)
         fielding = fg_fielding_data(
@@ -712,6 +716,139 @@ def save_csv(df: pd.DataFrame, path: Path) -> None:
     print(f"Saved {path} ({len(df)} rows)")
 
 
+def _mlb_regular_stats(team: str, season: int, rate_limit_seconds: float = 0.0) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Fetch team season totals, including unqualified hitters and relievers.
+
+    MLB groundOuts/airOuts is not FanGraphs GB%, so leave GB% unavailable.
+    Keep MLB identities separate from the FanGraphs ID namespace.
+    """
+    team_id = _mlb_team_id(team)
+    params = {
+        "stats": "season", "group": "hitting,pitching,fielding",
+        "season": season, "teamId": team_id, "sportIds": 1,
+        "gameType": "R", "playerPool": "ALL", "limit": 1000,
+        "hydrate": "person",
+    }
+    response = _fetch_with_rate_limit(
+        "https://statsapi.mlb.com/api/v1/stats?" + urlencode(params),
+        rate_limit_seconds, f"MLB regular-season stats for {team} {season}",
+    )
+    response.raise_for_status()
+    groups = {}
+    for group in response.json().get("stats", []):
+        splits = group.get("splits", [])
+        if group.get("totalSplits", len(splits)) > len(splits):
+            raise ValueError(f"Incomplete MLB season stats for {team} {season}")
+        groups[group.get("group", {}).get("displayName")] = [
+            split for split in splits
+            if split.get("team", {}).get("id") == team_id
+            and str(split.get("season")) == str(season)
+        ]
+
+    fielding = {}
+    for split in groups.get("fielding", []):
+        pid = split["player"]["id"]
+        stat = split["stat"]
+        totals = fielding.setdefault(pid, {"putouts": 0, "assists": 0, "errors": 0})
+        totals["putouts"] += stat.get("putOuts", 0)
+        totals["assists"] += stat.get("assists", 0)
+        totals["errors"] += stat.get("errors", 0)
+
+    def number(value):
+        try:
+            result = float(value)
+            return result if math.isfinite(result) else None
+        except (TypeError, ValueError):
+            return None
+
+    def identity(split, pitching=False):
+        person, stat = split["player"], split["stat"]
+        bats = (person.get("batSide") or {}).get("code")
+        throws = (person.get("pitchHand") or {}).get("code")
+        return {
+            "IDfg": None, "Name": person["fullName"], "Age": stat.get("age"),
+            "G": stat.get("gamesPlayed", 0),
+            "Pos": "P" if pitching else (split.get("position") or person.get("primaryPosition") or {}).get("abbreviation", ""),
+            "Hand": throws if pitching else bats, "LR": bats, "Throws": throws,
+        }
+
+    bat_rows = []
+    for split in groups.get("hitting", []):
+        stat = split["stat"]
+        row = identity(split)
+        for column, key in {
+            "AB": "atBats", "PA": "plateAppearances", "H": "hits",
+            "2B": "doubles", "3B": "triples", "HR": "homeRuns", "R": "runs",
+            "RBI": "rbi", "BB": "baseOnBalls", "SO": "strikeOuts",
+            "SB": "stolenBases", "CS": "caughtStealing",
+        }.items():
+            row[column] = stat.get(key, 0)
+        row["1B"] = row["H"] - row["2B"] - row["3B"] - row["HR"]
+        for column in ("AVG", "OBP", "SLG", "OPS"):
+            row[column] = number(stat.get(column.lower()))
+        totals = fielding.get(split["player"]["id"], {})
+        outs = totals.get("putouts", 0) + totals.get("assists", 0)
+        chances = outs + totals.get("errors", 0)
+        row["FP"] = outs / chances if chances else None
+        bat_rows.append(row)
+
+    pit_rows = []
+    for split in groups.get("pitching", []):
+        stat = split["stat"]
+        row = identity(split, pitching=True)
+        row.update({
+            "GS": stat.get("gamesStarted", 0), "CG": stat.get("completeGames", 0),
+            # Convert baseball's thirds-of-an-inning notation before CSV serialization.
+            "IP": ip_to_float(str(stat.get("inningsPitched", "0.0"))),
+            "ERA": number(stat.get("era")),
+            "K/9": number(stat.get("strikeoutsPer9Inn")),
+            "BB/9": number(stat.get("walksPer9Inn")), "GB%": None,
+        })
+        pit_rows.append(row)
+    if not bat_rows or not pit_rows:
+        raise ValueError(f"MLB returned no batting or pitching stats for {team} {season}")
+    return pd.DataFrame(bat_rows), pd.DataFrame(pit_rows)
+
+
+def _enrich_regular_hands(batting: pd.DataFrame, pitching: pd.DataFrame, season: int) -> None:
+    """Fill missing hands without overriding source data or looking up complete rows."""
+    missing = []
+    for frame, is_pitcher in ((batting, False), (pitching, True)):
+        # Empty CSV columns are inferred as numeric by pandas.
+        for column in ("Hand", "Throws", "LR"):
+            frame[column] = frame.get(column, pd.Series(index=frame.index, dtype=object)).astype(object)
+        for index, row in frame.iterrows():
+            bats = None
+            if not is_pitcher:
+                bats = normalize_hand(row.get("Hand")) or normalize_hand(row.get("LR"))
+            throws = normalize_hand(row.get("Throws"))
+            if is_pitcher:
+                throws = throws or normalize_hand(row.get("Hand"))
+            if (not is_pitcher and not bats) or not throws:
+                missing.append((frame, index, row, is_pitcher, bats, throws))
+            else:
+                frame.at[index, "Hand"] = throws if is_pitcher else bats
+                frame.at[index, "Throws"] = throws
+                if not is_pitcher:
+                    frame.at[index, "LR"] = bats
+    if not missing:
+        return
+    ids = []
+    for _, _, row, _, _, _ in missing:
+        if pd.notna(row.get("IDfg")):
+            ids.append(int(row["IDfg"]))
+    fg_lookup = hands_from_fg_ids(list(set(ids)), season=season) if ids else {}
+    name_lookup = hands_from_names([row.get("Name") for _, _, row, _, _, _ in missing], season=season)
+    for frame, index, row, is_pitcher, bats, throws in missing:
+        fg_id = int(row["IDfg"]) if pd.notna(row.get("IDfg")) else None
+        resolved_bats, resolved_throws = resolve_hands(row.get("Name"), fg_id, fg_lookup, name_lookup, season=season)
+        bats, throws = bats or resolved_bats, throws or resolved_throws
+        frame.at[index, "Hand"] = throws if is_pitcher else bats
+        frame.at[index, "Throws"] = throws
+        if not is_pitcher:
+            frame.at[index, "LR"] = bats
+
+
 def fetch_regular(team: str, season: int, rate_limit_seconds: float = 0.0, refresh: bool = False) -> None:
     bat_path, pit_path = stat_paths(team, season, postseason=False)
     batting = pitching = None
@@ -719,78 +856,44 @@ def fetch_regular(team: str, season: int, rate_limit_seconds: float = 0.0, refre
         try:
             batting = pd.read_csv(bat_path)
             pitching = pd.read_csv(pit_path)
+            if (
+                batting.empty or pitching.empty
+                or not {"Name", "G", "AVG", "OBP", "HR", "2B", "SB"}.issubset(batting.columns)
+                or not {"Name", "ERA", "IP"}.issubset(pitching.columns)
+            ):
+                raise ValueError("Incomplete cached regular-season statistics")
             print(f"[deadball] Using cached regular-season stats from {bat_path} and {pit_path}")
         except Exception:
             batting = pitching = None
 
     if batting is None or pitching is None:
         team_id = fg_team_id(team)
-        _announce_request(f"Fangraphs batting for {team} {season}", rate_limit_seconds)
-        batting = fg_batting_data(
-            start_season=season,
-            end_season=season,
-            team=team_id,
-            split_seasons=False,
-            qual=0,
-        )
-        _maybe_sleep(rate_limit_seconds)
-        _announce_request(f"Fangraphs pitching for {team} {season}", rate_limit_seconds)
-        pitching = fg_pitching_data(
-            start_season=season,
-            end_season=season,
-            team=team_id,
-            split_seasons=False,
-            qual=0,
-        )
-        _maybe_sleep(rate_limit_seconds)
+        try:
+            _announce_request(f"Fangraphs batting for {team} {season}", rate_limit_seconds)
+            batting = fg_batting_data(
+                start_season=season, end_season=season, team=team_id,
+                split_seasons=False, qual=0,
+            )
+            _maybe_sleep(rate_limit_seconds)
+            _announce_request(f"Fangraphs pitching for {team} {season}", rate_limit_seconds)
+            pitching = fg_pitching_data(
+                start_season=season, end_season=season, team=team_id,
+                split_seasons=False, qual=0,
+            )
+            _maybe_sleep(rate_limit_seconds)
+            if batting.empty or pitching.empty:
+                raise ValueError("Empty FanGraphs season statistics")
+        except (requests.RequestException, ValueError) as exc:
+            print(f"[deadball] FanGraphs unavailable ({exc}); using MLB season stats")
+            try:
+                batting, pitching = _mlb_regular_stats(team, season, rate_limit_seconds)
+            except (requests.RequestException, ValueError, KeyError, TypeError) as mlb_exc:
+                raise RuntimeError(
+                    f"Unable to fetch regular-season stats for {team} {season}: "
+                    f"FanGraphs failed ({exc}); MLB fallback failed ({mlb_exc})"
+                ) from mlb_exc
 
-    # Enrich with handedness using Fangraphs ids if missing/empty.
-    needs_hand_bat = ("Hand" not in batting.columns) or batting["Hand"].isna().all()
-    needs_hand_pit = ("Hand" not in pitching.columns) or pitching["Hand"].isna().all()
-    if needs_hand_bat or needs_hand_pit or ("Throws" not in batting.columns) or ("Throws" not in pitching.columns):
-        fg_ids = list(
-            pd.concat([batting.get("IDfg", pd.Series(dtype=int)), pitching.get("IDfg", pd.Series(dtype=int))], ignore_index=True)
-            .dropna()
-            .astype(int)
-            .unique()
-        )
-        hand_lookup = hands_from_fg_ids(fg_ids, season=season)
-        name_lookup = hands_from_names(
-            list(batting.get("Name", pd.Series(dtype=str)).astype(str))
-            + list(pitching.get("Name", pd.Series(dtype=str)).astype(str))
-        , season=season)
-        batting["Hand"] = batting.apply(
-            lambda r: resolve_hands(
-                r.get("Name"),
-                int(r.get("IDfg")) if pd.notna(r.get("IDfg")) else None,
-                hand_lookup,
-                name_lookup,
-                season=season,
-            )[0],
-            axis=1,
-        )
-        batting["Throws"] = batting.apply(
-            lambda r: resolve_hands(
-                r.get("Name"),
-                int(r.get("IDfg")) if pd.notna(r.get("IDfg")) else None,
-                hand_lookup,
-                name_lookup,
-                season=season,
-            )[1],
-            axis=1,
-        )
-        batting["LR"] = batting.get("LR", batting["Hand"])
-        pitching["Hand"] = pitching.apply(
-            lambda r: resolve_hands(
-                r.get("Name"),
-                int(r.get("IDfg")) if pd.notna(r.get("IDfg")) else None,
-                hand_lookup,
-                name_lookup,
-                season=season,
-            )[1],
-            axis=1,
-        )
-        pitching["Throws"] = pitching["Hand"]
+    _enrich_regular_hands(batting, pitching, season)
     batting = merge_fp(batting, team, season, rate_limit_seconds=rate_limit_seconds)
     batting["Pos"] = batting.get("Pos", "")
     batting["LR"] = batting.get("LR", batting.get("Hand"))
@@ -1223,34 +1326,12 @@ def pitcher_traits(row: pd.Series) -> list[str]:
 def build_deadball_regular(team: str, season: int) -> None:
     bat = pd.read_csv(STAT_DIR / f"{team.lower()}_{season}_batting.csv")
     pit = pd.read_csv(STAT_DIR / f"{team.lower()}_{season}_pitching.csv")
-    fg_ids = pd.concat(
-        [bat.get("IDfg", pd.Series(dtype=int)), pit.get("IDfg", pd.Series(dtype=int))],
-        ignore_index=True,
-    ).dropna()
-    try:
-        fg_ids = fg_ids.astype(int)
-    except Exception:
-        fg_ids = pd.Series(dtype=int)
-    # Re-resolve handedness from IDs/names in case stat files lack them.
-    hand_lookup = hands_from_fg_ids(list(fg_ids.unique()), season=season)
-    name_lookup = hands_from_names(
-        list(bat.get("Name", pd.Series(dtype=str)).astype(str))
-        + list(pit.get("Name", pd.Series(dtype=str)).astype(str))
-    , season=season)
+    _enrich_regular_hands(bat, pit, season)
     bat_rows = []
     for _, row in bat.iterrows():
         primary_pos, all_pos = parse_positions(row.get("Pos"), default=row.get("Pos", ""))
-        try:
-            fg_id_val = int(row.get("IDfg"))
-        except Exception:
-            fg_id_val = None
-        bats_hand, throws_hand = resolve_hands(
-            row.get("Name"),
-            fg_id_val,
-            hand_lookup,
-            name_lookup,
-            season=season,
-        )
+        bats_hand = normalize_hand(row.get("Hand"))
+        throws_hand = normalize_hand(row.get("Throws"))
         out_row = {
             "Type": "Hitter",
             "Name": row.get("Name"),
@@ -1275,17 +1356,7 @@ def build_deadball_regular(team: str, season: int) -> None:
 
     pit_rows = []
     for _, row in pit.iterrows():
-        try:
-            fg_id_val = int(row.get("IDfg"))
-        except Exception:
-            fg_id_val = None
-        bats_hand, throws_hand = resolve_hands(
-            row.get("Name"),
-            fg_id_val,
-            hand_lookup,
-            name_lookup,
-            season=season,
-        )
+        throws_hand = normalize_hand(row.get("Throws")) or normalize_hand(row.get("Hand"))
         out_row = {
             "Type": "Pitcher",
             "Name": row.get("Name"),

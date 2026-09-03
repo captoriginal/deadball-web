@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Tuple
 
 from pypdf import PdfReader, PdfWriter
-from pypdf.generic import NameObject, BooleanObject
+from pypdf._font import Font
+from pypdf.generic import NameObject, NumberObject, TextStringObject
 
 from app import models
 
@@ -132,20 +133,20 @@ def _pd(item: Mapping[str, object]) -> str:
 
 
 def _numeric_bt(item: Mapping[str, object]) -> float | None:
-    direct = _safe_float(item.get("BT") or item.get("bt"))
+    direct = _safe_float(_val(item, "BT", "bt"))
     if direct is not None:
         return direct
-    avg = _safe_float(item.get("AVG") or item.get("avg"))
+    avg = _safe_float(_val(item, "AVG", "avg"))
     if avg is not None:
         return avg * 100.0
     return None
 
 
 def _numeric_obt(item: Mapping[str, object]) -> float | None:
-    direct = _safe_float(item.get("OBT") or item.get("obt"))
+    direct = _safe_float(_val(item, "OBT", "obt"))
     if direct is not None:
         return direct
-    obp = _safe_float(item.get("OBP") or item.get("obp"))
+    obp = _safe_float(_val(item, "OBP", "obp"))
     if obp is not None:
         return obp * 100.0
     return None
@@ -429,17 +430,50 @@ def render_scorecard_pdf(field_values_by_page: Dict[int, Dict[str, str]]) -> byt
     reader = PdfReader(TEMPLATE_PATH)
     writer = PdfWriter()
     writer.clone_document_from_reader(reader)
-    # Hint to viewers to regenerate appearances so filled values render reliably.
-    if writer._root_object.get("/AcroForm"):
-        writer._root_object["/AcroForm"][NameObject("/NeedAppearances")] = BooleanObject(True)
 
     # Merge all fields; some forms treat fields as global regardless of page.
     merged_fields: Dict[str, str] = {}
     for fields in field_values_by_page.values():
         merged_fields.update(fields)
 
-    for page_index, page in enumerate(writer.pages):
-        writer.update_page_form_field_values(page, merged_fields)
+    for page in writer.pages:
+        page_fields = dict(merged_fields)
+        wrapped_widgets = []
+        for reference in page.get("/Annots", []):
+            widget = reference.get_object()
+            field = widget
+            names = []
+            while field is not None:
+                names.append(str(field.get("/T", "")))
+                parent = field.get("/Parent")
+                field = parent.get_object() if parent else None
+            name = ".".join(reversed([part for part in names if part]))
+            if any(token in name for token in ("NAME", "TRAITS", "NOTES")):
+                widget[NameObject("/Ff")] = NumberObject(int(widget.get("/Ff", 0)) | 4096)
+                appearance = str(widget.get("/DA", "/Helv 9 Tf 0 g"))
+                # Names and traits match the template's 9-point POS/LR/BT text.
+                # Keep automatic sizing only for the notes box.
+                size = 0 if "NOTES" in name else 9
+                widget[NameObject("/DA")] = TextStringObject(re.sub(r"[\d.]+\s+Tf", f"{size} Tf", appearance))
+                if size and name in merged_fields:
+                    font_name = appearance.split()[0]
+                    resources = writer.root_object["/AcroForm"]["/DR"]["/Font"]
+                    font = (Font.from_font_resource(resources[font_name]) if font_name in resources
+                            else Font.from_core_font_name("/Helvetica"))
+                    width = float(widget["/Rect"][2] - widget["/Rect"][0]) - 4
+                    lines = []
+                    for word in merged_fields[name].split():
+                        candidate = f"{lines[-1]} {word}" if lines else word
+                        if lines and font.get_text_width(candidate) * size / 1000 <= width:
+                            lines[-1] = candidate
+                        else:
+                            lines.append(word)
+                    page_fields[name] = "\n".join(lines)
+                    wrapped_widgets.append((widget, merged_fields[name]))
+        writer.update_page_form_field_values(page, page_fields, auto_regenerate=False)
+        # Wrap the printed appearance, while preserving the original field value.
+        for widget, value in wrapped_widgets:
+            widget[NameObject("/V")] = TextStringObject(value)
 
     buffer = BytesIO()
     writer.write(buffer)
