@@ -28,6 +28,7 @@ class Roster(BaseModel):
 
 class GenerateRequest(BaseModel):
     mode: Literal["season", "box_score", "manual"]
+    trait_mode: Literal["standard", "sabr", "adaptive"] = "standard"
     payload: str
     name: Optional[str] = Field(default=None, description="Optional roster name override")
     description: Optional[str] = None
@@ -65,6 +66,7 @@ class GameListResponse(BaseModel):
 
 class GameGenerateRequest(BaseModel):
     force: bool = False
+    trait_mode: Literal["standard", "sabr", "adaptive"] = "standard"
     payload: Optional[str] = Field(default=None, description="Optional raw stats payload to use instead of fetching")
 
 

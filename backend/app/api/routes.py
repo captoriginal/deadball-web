@@ -1,3 +1,4 @@
+import json
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Iterable, List
@@ -28,6 +29,8 @@ from deadball_generator.generator import (
     generate_game_from_raw,
     generate_roster as generate_deadball_roster,
 )
+from deadball_generator.rules import RULES_VERSION
+from deadball_generator import cache_policy
 
 router = APIRouter()
 settings = get_settings()
@@ -119,6 +122,8 @@ def generate_roster(request: GenerateRequest, session: Session = Depends(get_ses
         name=roster_name,
         description=request.description or f"Generated from {request.mode} payload",
         public=request.public,
+        trait_mode=request.trait_mode,
+        allow_network=settings.allow_generator_network,
     )
 
     roster_model = models.Roster(
@@ -345,26 +350,36 @@ def generate_game(
     request: GameGenerateRequest,
     session: Session = Depends(get_session),
 ) -> GameGenerateResponse:
-    """Generate deadball stats/game for a single game; uses cache unless forced."""
+    """Generate stats/game; reuse cache only for matching rules and trait mode."""
     game = session.exec(select(models.Game).where(models.Game.game_id == game_id)).first()
     if not game:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Game not found; list games first")
 
     # Check generated cache
     cached_generated = session.exec(select(models.GameGenerated).where(models.GameGenerated.game_id == game.id)).first()
-    if cached_generated and not request.force:
-        cache_valid = True
+    if cached_generated and not request.force and not request.payload:
+        cache_valid = False
         try:
             parsed_cache = json.loads(cached_generated.stats)
             players = parsed_cache.get("players") if isinstance(parsed_cache, dict) else None
-            if not players or len(players) == 0:
-                cache_valid = False
-        except Exception:
-            cache_valid = False
+            meta = parsed_cache.get("meta") if isinstance(parsed_cache, dict) else None
+            cache_valid = (
+                isinstance(players, list)
+                and bool(players)
+                and isinstance(meta, dict)
+                and meta.get("rules_version") == RULES_VERSION
+                and meta.get("trait_mode") == request.trait_mode
+            )
+            if cache_valid:
+                fresh = cache_policy.is_fresh(game.game_date.year, meta.get("snapshot_at"))
+                cache_valid = fresh or not settings.allow_generator_network
+                meta["stale"] = not fresh
+        except (ValueError, TypeError):
+            pass
         if cache_valid:
             return GameGenerateResponse(
                 game=_serialize_game(game),
-                stats=cached_generated.stats,
+                stats=json.dumps(parsed_cache),
                 game_text=cached_generated.game_text,
                 cached=True,
             )
@@ -379,13 +394,21 @@ def generate_game(
         raw_stats_row = models.GameRawStats(game_id=game.id, payload=raw_payload)
         session.add(raw_stats_row)
         session.commit()
-    elif not raw_stats_row:
+    elif not raw_stats_row or (settings.allow_generator_network and (
+        request.force or not cache_policy.is_fresh(
+            game.game_date.year, raw_stats_row.created_at.replace(tzinfo=UTC).timestamp()
+        )
+    )):
         if settings.allow_generator_network:
             try:
                 url = f"https://statsapi.mlb.com/api/v1/game/{game.game_id}/boxscore"
                 resp = requests.get(url, timeout=10)
                 resp.raise_for_status()
-                raw_stats_row = models.GameRawStats(game_id=game.id, payload=resp.text)
+                if raw_stats_row is None:
+                    raw_stats_row = models.GameRawStats(game_id=game.id, payload=resp.text)
+                else:
+                    raw_stats_row.payload = resp.text
+                    raw_stats_row.created_at = datetime.now(UTC)
                 session.add(raw_stats_row)
                 session.commit()
             except Exception as exc:
@@ -401,8 +424,6 @@ def generate_game(
     # If cached payload is non-JSON and we allow network, try refetching the real boxscore; otherwise fail.
     if settings.allow_generator_network:
         try:
-            import json
-
             json.loads(raw_payload)
         except Exception:
             try:
@@ -411,6 +432,7 @@ def generate_game(
                 resp.raise_for_status()
                 raw_payload = resp.text
                 raw_stats_row.payload = raw_payload
+                raw_stats_row.created_at = datetime.now(UTC)
                 session.add(raw_stats_row)
                 session.commit()
             except Exception as exc:
@@ -427,8 +449,6 @@ def generate_game(
         or game.away_team_short == game.away_team
     ):
         try:
-            import json
-
             payload_json = json.loads(raw_payload)
             teams = payload_json.get("teams", {})
             home, home_short = _extract_team_labels(teams.get("home", {}).get("team"))
@@ -462,9 +482,20 @@ def generate_game(
             away_team=game.away_team,
             raw_stats=raw_payload,
             allow_network=settings.allow_generator_network,
+            trait_mode=request.trait_mode,
+            refresh=request.force,
         )
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to generate game stats: {exc}") from exc
+
+    # A fresh rebuild cannot extend the life of an older boxscore or stat snapshot.
+    parsed_generated = json.loads(generated["stats"])
+    metadata = parsed_generated.setdefault("meta", {})
+    metadata["snapshot_at"] = cache_policy.oldest([
+        metadata.get("snapshot_at"), raw_stats_row.created_at.replace(tzinfo=UTC).timestamp(),
+    ])
+    metadata["stale"] = not cache_policy.is_fresh(game.game_date.year, metadata["snapshot_at"])
+    generated["stats"] = json.dumps(parsed_generated)
 
     if cached_generated:
         session.delete(cached_generated)

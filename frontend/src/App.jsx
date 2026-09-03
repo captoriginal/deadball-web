@@ -204,6 +204,7 @@ export default function App() {
   const [gamesStatusTone, setGamesStatusTone] = useState("info");
   const [selectedGame, setSelectedGame] = useState(null);
   const [forceGenerate, setForceGenerate] = useState(false);
+  const [traitMode, setTraitMode] = useState("standard");
   const [gameResult, setGameResult] = useState(null);
   const [actionStatus, setActionStatus] = useState({ gameId: null, message: "", tone: "info" });
   const [loadingAction, setLoadingAction] = useState({ gameId: null, kind: null });
@@ -826,7 +827,7 @@ export default function App() {
 
   async function generateGame(gameId, { scrollToScorecard: doScroll = true } = {}) {
     setActionStatus({ gameId, message: "Generating...", tone: "info" });
-    logCall(`Requesting game generate for ${gameId} (force=${forceGenerate})`);
+    logCall(`Requesting game generate for ${gameId} (force=${forceGenerate}, trait_mode=${traitMode})`);
     setGameResult(null);
     setScorecardHtml("<p style='font-family:Arial;padding:16px;'>Generating scorecard...</p>");
     setScorecardPdfUrl("");
@@ -837,7 +838,7 @@ export default function App() {
       if (isTauri) {
         const proxied = await tauriBackendRequest(`/api/games/${encodeURIComponent(gameId)}/generate`, {
           method: "POST",
-          body: JSON.stringify({ force: forceGenerate }),
+          body: JSON.stringify({ force: forceGenerate, trait_mode: traitMode }),
           contentType: "application/json",
         });
         const text = new TextDecoder().decode(new Uint8Array(proxied.body || []));
@@ -849,7 +850,7 @@ export default function App() {
         const res = await fetch(`${API_BASE}/api/games/${gameId}/generate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ force: forceGenerate }),
+          body: JSON.stringify({ force: forceGenerate, trait_mode: traitMode }),
         });
         if (!res.ok) {
           let detail = "";
@@ -864,9 +865,15 @@ export default function App() {
         data = await res.json();
       }
       setGameResult(data);
+      let staleStats = false;
+      try {
+        staleStats = JSON.parse(data.stats)?.meta?.stale === true;
+      } catch {
+        // Rendering below handles malformed payloads.
+      }
       setActionStatus({
         gameId,
-        message: data.cached ? "Served from cache" : "Generated fresh",
+        message: staleStats ? "Using older or undated statistics; refresh online for current ratings" : data.cached ? "Served from cache" : "Generated fresh",
         tone: "info",
       });
       logCall(data.cached ? `Backend served cached game ${gameId}` : `Backend generated game ${gameId} (may have fetched boxscore)`);
@@ -1186,6 +1193,19 @@ export default function App() {
               >
                 Load games
               </button>
+              <label className="flex items-center gap-2 text-sm text-slate-600">
+                Trait mode
+                <select
+                  value={traitMode}
+                  onChange={(e) => setTraitMode(e.target.value)}
+                  disabled={loadingAction.gameId !== null}
+                  className="rounded border border-slate-300 bg-white px-2 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none disabled:opacity-60"
+                >
+                  <option value="standard">Standard</option>
+                  <option value="sabr">SABR</option>
+                  <option value="adaptive">Adaptive</option>
+                </select>
+              </label>
               {gamesStatus && (
                 <span
                   className={`text-sm ${
@@ -1244,7 +1264,7 @@ export default function App() {
                                 onChange={(e) => setForceGenerate(e.target.checked)}
                                 disabled={isBusy}
                               />
-                              Force
+                              Refresh stats
                             </label>
                           )}
                           <button
@@ -1299,6 +1319,7 @@ export default function App() {
                         <th className="px-2 py-2 text-left">Pos</th>
                         <th className="px-2 py-2 text-left">Type</th>
                         <th className="px-2 py-2 text-left">Traits</th>
+                        <th className="px-2 py-2 text-left">Rating explanation</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1309,6 +1330,11 @@ export default function App() {
                           <td className="px-2 py-1">{p.Pos || p.Positions}</td>
                           <td className="px-2 py-1">{p.Type}</td>
                           <td className="px-2 py-1">{p.Traits}</td>
+                          <td className="max-w-md whitespace-pre-wrap break-words px-2 py-1">
+                            {typeof p.RatingNotes === "string"
+                              ? p.RatingNotes
+                              : p.RatingNotes ? JSON.stringify(p.RatingNotes, null, 2) : "—"}
+                          </td>
                         </tr>
                       ))}
                     </tbody>

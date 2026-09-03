@@ -14,13 +14,15 @@ import hashlib
 import json
 import re
 import unicodedata
+import warnings
 from pathlib import Path
 import time
 from typing import List, Optional, Sequence, Tuple
 
 import pandas as pd
 import requests
-from deadball_generator import paths
+from deadball_generator import career, paths, rules, cache_policy
+from deadball_generator.rules import batter_traits, pitcher_traits, pitcher_die, target as fmt_two_digit
 from deadball_generator.scorecards import fill as fill_scorecard
 from deadball_generator.stats_fetchers import team_stats
 
@@ -31,7 +33,6 @@ SEASON_DIR = paths.DEADBALL_SEASON_DIR
 LEGACY_DEADBALL_DIR = ROOT / "deadball"
 CACHE_ROOT = ROOT / ".cache"
 CACHE_HTML_DIR = CACHE_ROOT / "boxscores"
-CACHE_HTML_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _maybe_sleep(rate_limit_seconds: float) -> None:
@@ -67,6 +68,7 @@ def _fetch_with_rate_limit(
     print(f"[deadball] Requesting {label}: {url}")
     resp = requests.get(url, headers=HEADERS, timeout=30)
     if resp.ok:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache_path.write_bytes(resp.content)
     if rate_limit_seconds > 0:
         print(f"[deadball] Waiting {rate_limit_seconds:.1f}s before next request")
@@ -352,12 +354,6 @@ def mlb_team_id(team_code: str) -> int:
     return MLB_TEAM_IDS[code]
 
 
-def fmt_two_digit(val: float) -> Optional[str]:
-    if pd.isna(val):
-        return None
-    return f"{int(round(val * 100)):02d}"
-
-
 def parse_positions(raw: Optional[str], default: str = "") -> Tuple[str, str]:
     """
     Normalize a raw BR position string (e.g., RF, PH-RF, 7/8) into
@@ -403,42 +399,6 @@ def parse_positions(raw: Optional[str], default: str = "") -> Tuple[str, str]:
     return seen[0], ",".join(seen)
 
 
-def batter_traits(row: pd.Series) -> List[str]:
-    traits: List[str] = []
-    hr = float(row.get("HR", 0) or 0)
-    doubles = float(row.get("2B", 0) or 0)
-    sb = float(row.get("SB", 0) or 0)
-    games = float(row.get("G", 1) or 1)  # single game default 1
-    pos = str(row.get("Positions", "") or "")
-
-    if hr >= 35:
-        traits.append("P++")
-    elif hr >= 25:
-        traits.append("P+")
-    elif hr < 5:
-        traits.append("P−−")
-    elif 5 <= hr <= 10:
-        traits.append("P−")
-
-    if doubles >= 35:
-        traits.append("C+")
-    elif doubles < 10:
-        traits.append("C−")
-
-    if sb >= 20:
-        traits.append("S+")
-    elif sb == 0:
-        traits.append("S−")
-
-    catcher_threshold = 130
-    other_threshold = 150
-    threshold = catcher_threshold if "C" in pos else other_threshold
-    if games >= threshold:
-        traits.append("T+")
-
-    return traits
-
-
 def ip_to_float(ip_val) -> float:
     if pd.isna(ip_val):
         return 0.0
@@ -455,48 +415,6 @@ def ip_to_float(ip_val) -> float:
         return float(s)
     except ValueError:
         return 0.0
-
-
-def pitcher_die(era: float) -> Optional[str]:
-    if pd.isna(era):
-        return None
-    if era < 2.0:
-        return "d20"
-    if era < 3.0:
-        return "d12"
-    if era < 4.0:
-        return "d8"
-    if era < 5.0:
-        return "d4"
-    if era < 6.0:
-        return "-d4"
-    if era < 7.0:
-        return "-d8"
-    if era < 8.0:
-        return "-d12"
-    return "-d20"
-
-
-def pitcher_traits(row: pd.Series) -> List[str]:
-    traits: List[str] = []
-    k9 = row.get("K/9")
-    bb9 = row.get("BB/9")
-    gb_pct = row.get("GB%")
-    ip = row.get("IP", 0) or 0
-
-    if pd.notna(k9) and k9 >= 10:
-        traits.append("K+")
-    if pd.notna(gb_pct) and gb_pct >= 55:
-        traits.append("GB+")
-    if pd.notna(bb9) and bb9 < 2:
-        traits.append("CN+")
-    if pd.notna(bb9) and bb9 >= 4:
-        traits.append("CN−")
-
-    if ip >= 9:  # full game pitched
-        traits.append("ST+")
-
-    return traits
 
 
 def mlb_batting_order(raw: str | None) -> tuple[str | None, float]:
@@ -594,57 +512,115 @@ def mlb_person_hands(
 def load_deadball_source(
     team: str,
     season: int,
-    postseason: bool,
+    postseason: bool = False,
     rate_limit_seconds: float = 0.0,
     allow_fetch: bool = True,
     refresh: bool = False,
+    trait_mode: str = "standard",
 ) -> pd.DataFrame:
-    candidates = []
+    """Load current regular-season ratings, regardless of the game's round.
+
+    Filenames remain mode-independent; every row must match the requested rules.
+    Refresh bypasses generated ratings but can rebuild from raw caches offline.
+    """
+    rules.validate_mode(trait_mode)
     tlow = team.lower()
-    if postseason:
-        candidates += [
-            SEASON_DIR / f"{tlow}_{season}_deadball_postseason.csv",
-            SEASON_DIR / f"{tlow}_deadball_postseason_{season}.csv",  # legacy naming
-            SEASON_DIR / f"{tlow}_deadball_postseason.csv",
-            LEGACY_DEADBALL_DIR / f"{tlow}_{season}_deadball_postseason.csv",
-            LEGACY_DEADBALL_DIR / f"{tlow}_deadball_postseason_{season}.csv",
-            LEGACY_DEADBALL_DIR / f"{tlow}_deadball_postseason.csv",
-        ]
-    else:
-        candidates += [
-            SEASON_DIR / f"{tlow}_{season}_deadball.csv",
-            SEASON_DIR / f"{tlow}_{season}_deadball_seaason.csv",  # legacy with typo
-            SEASON_DIR / f"{tlow}_deadball_{season}.csv",  # legacy naming
-            SEASON_DIR / f"{tlow}_deadball.csv",
-            LEGACY_DEADBALL_DIR / f"{tlow}_{season}_deadball.csv",
-            LEGACY_DEADBALL_DIR / f"{tlow}_{season}_deadball_seaason.csv",
-            LEGACY_DEADBALL_DIR / f"{tlow}_deadball_{season}.csv",
-            LEGACY_DEADBALL_DIR / f"{tlow}_deadball.csv",
-        ]
-    for path in candidates:
-        if path.exists():
-            return pd.read_csv(path)
-    # Try to build on the fly. We prefer to build both regular and postseason,
-    # but postseason tables may not exist (e.g., non-playoff teams), so failures
-    # there should not block regular-season lookups.
-    if not allow_fetch:
-        raise FileNotFoundError(
-            f"Deadball source file not found for {team} ({'postseason' if postseason else 'regular'}); tried: {candidates}. "
-            "Run without --no-fetch to build missing season files."
-        )
-    team_stats.fetch_regular(team, season, rate_limit_seconds=rate_limit_seconds, refresh=refresh)
-    team_stats.build_deadball_regular(team, season)
-    if postseason:
+    candidates = [
+        SEASON_DIR / f"{tlow}_{season}_deadball.csv",
+        SEASON_DIR / f"{tlow}_{season}_deadball_seaason.csv",  # legacy with typo
+        SEASON_DIR / f"{tlow}_deadball_{season}.csv",  # legacy naming
+        SEASON_DIR / f"{tlow}_deadball.csv",
+        LEGACY_DEADBALL_DIR / f"{tlow}_{season}_deadball.csv",
+        LEGACY_DEADBALL_DIR / f"{tlow}_{season}_deadball_seaason.csv",
+        LEGACY_DEADBALL_DIR / f"{tlow}_deadball_{season}.csv",
+        LEGACY_DEADBALL_DIR / f"{tlow}_deadball.csv",
+    ]
+
+    def read_current(path: Path, *, just_built=False) -> pd.DataFrame | None:
+        if not path.exists():
+            return None
         try:
-            team_stats.fetch_postseason(team, season, rate_limit_seconds=rate_limit_seconds, refresh=refresh)
-            team_stats.build_deadball_postseason(team, season)
-        except Exception:
-            # Postseason fetch disabled or unavailable; skip gracefully.
-            pass
-    for path in candidates:
-        if path.exists():
-            return pd.read_csv(path)
-    raise FileNotFoundError(f"Deadball source file not found for {team} ({'postseason' if postseason else 'regular'}); tried: {candidates}")
+            df = pd.read_csv(path)
+        except (pd.errors.EmptyDataError, pd.errors.ParserError):
+            return None
+        if (not df.empty and {"RulesVersion", "TraitMode"}.issubset(df.columns)
+                and df["RulesVersion"].eq(rules.RULES_VERSION).all()
+                and df["TraitMode"].eq(trait_mode).all()):
+            fresh = cache_policy.is_fresh(season, cache_policy.frame_snapshot(df))
+            if not fresh and allow_fetch and not just_built:
+                return None
+            df["CacheStale"] = not fresh
+            return df
+        return None
+
+    if not refresh:
+        for path in candidates:
+            current = read_current(path)
+            if current is not None:
+                return current
+
+    raw_paths = team_stats.stat_paths(team, season, postseason=False)
+    if allow_fetch:
+        # fetch_regular validates StatsVersion and preserves current raw caches.
+        team_stats.fetch_regular(team, season, rate_limit_seconds=rate_limit_seconds, refresh=refresh)
+    if not all(path.exists() for path in raw_paths):
+        policy = "after fetch" if allow_fetch else "network fetch disabled"
+        raise FileNotFoundError(f"Regular-season raw stats unavailable for {team} {season}; {policy}")
+    team_stats.build_deadball_regular(
+        team, season, trait_mode=trait_mode, allow_network=allow_fetch,
+        refresh=refresh, rate_limit_seconds=rate_limit_seconds,
+    )
+    # Only accept the newly built canonical output, not a stale legacy file.
+    current = read_current(team_stats.deadball_paths(team, season, postseason=False)[0], just_built=True)
+    if current is None:
+        raise ValueError(f"Generated regular-season ratings for {team} {season} do not match {rules.RULES_VERSION}/{trait_mode}")
+    return current
+
+
+RATING_METADATA = ("IDmlb", "RatingNotes", "Provisional", "RatingSource", "RulesVersion", "TraitMode", "Role", "SnapshotAt", "CacheStale")
+
+
+def _player_id(value: object) -> str | None:
+    number = rules.number(value)
+    return str(int(number)) if number is not None and number > 0 and number.is_integer() else None
+
+
+def _missing_player_source(player: dict, pitching: bool, trait_mode: str, history: dict) -> dict:
+    """Prefer regular-season history; otherwise evaluate provisional seasonStats."""
+    stats = (player.get("seasonStats") or {}).get("pitching" if pitching else "batting") or {}
+    fields = {
+        "G": "gamesPlayed", "GS": "gamesStarted", "PA": "plateAppearances",
+        "AVG": "avg", "OBP": "obp", "SLG": "slg", "HR": "homeRuns",
+        "2B": "doubles", "SB": "stolenBases", "SO": "strikeOuts",
+        "ERA": "era", "K/9": "strikeoutsPer9Inn", "BB/9": "walksPer9Inn",
+    }
+    sample = {key: rules.number(stats.get(api_key)) for key, api_key in fields.items()}
+    sample["Pos"] = mlb_positions(player, default="P" if pitching else "")[0]
+    sample["IDmlb"] = (player.get("person") or {}).get("id")
+    if pitching:
+        ip = career.innings(stats.get("inningsPitched"))
+        sample["IP"] = ip
+        for key, api_key in (("K/9", "strikeOuts"), ("BB/9", "baseOnBalls"), ("ERA", "earnedRuns")):
+            count = rules.number(stats.get(api_key))
+            if sample[key] is None and ip and ip > 0 and count is not None:
+                sample[key] = count * 9 / ip
+        # groundOuts/airOuts are not GB%; leave the latter unassessed.
+    kind = "pitcher" if pitching else "hitter"
+    annual = history.get(f"season_{kind}") or {}
+    sample.update({key: value for key, value in annual.items() if value is not None})
+    if not pitching and history.get("season_fielding"):
+        sample["FP"] = history["season_fielding"].get("FP")
+    evaluate = rules.evaluate_pitcher if pitching else rules.evaluate_hitter
+    rating = evaluate(sample, mode=trait_mode, career=history.get(kind))
+    notes = json.loads(rating["RatingNotes"])
+    if annual or history.get(kind):
+        notes.setdefault("reasons", {})["source"] = "Player absent from team ratings; recovered MLB regular-season/career history by ID"
+    else:
+        notes.update(source="boxscore-season-provisional", provisional=True)
+        notes.setdefault("reasons", {})["source"] = "Regular-season player source unavailable; using boxscore seasonStats without career history"
+        rating.update(RatingSource="boxscore-season-provisional", Provisional=True)
+    rating["RatingNotes"] = json.dumps(notes, sort_keys=True)
+    return {**sample, **rating}
 
 
 def build_deadball_for_game(
@@ -657,7 +633,9 @@ def build_deadball_for_game(
     rate_limit_seconds: float = 0.0,
     no_fetch: bool = False,
     refresh: bool = False,
+    trait_mode: str = "standard",
 ) -> tuple[pd.DataFrame, dict[str, str]]:
+    rules.validate_mode(trait_mode)
     if box_file and box_url_override:
         raise ValueError("Specify only one of --box-url or --box-file.")
 
@@ -665,16 +643,8 @@ def build_deadball_for_game(
 
     allow_network = not no_fetch
 
-    if auto_postseason and not postseason:
-        gtype, gdesc = mlb_game_type(
-            date,
-            team,
-            rate_limit_seconds=rate_limit_seconds,
-            allow_network=allow_network,
-        )
-        if gtype and gtype not in ("R", "S", "E"):
-            postseason = True
-            print(f"[deadball] Auto-detected postseason game via MLB Stats API ({gtype}): {gdesc or ''}")
+    # postseason/auto_postseason remain accepted for CLI compatibility. The
+    # boxscore selects participants; ratings always use regular-season/career.
 
     boxscore: dict | None = None
     team_labels: dict[str, str] = {}
@@ -724,43 +694,62 @@ def build_deadball_for_game(
 
     # Load deadball sources per-team as they appear in the boxscore (home + away).
     lookup_cache: dict[str, tuple[dict[str, pd.Series], dict[str, pd.Series]]] = {}
+    history_cache: dict[str, dict] = {}
 
     def get_lookups(raw_team_name: str, team_abbr: str) -> tuple[dict[str, pd.Series], dict[str, pd.Series]]:
         team_code = team_code_from_name(team_abbr or raw_team_name)
         if not team_code:
             raise ValueError(f"Could not determine team code for '{raw_team_name}'")
         if team_code not in lookup_cache:
-            deadball_df = load_deadball_source(
-                team_code,
-                season,
-                postseason,
-                rate_limit_seconds=rate_limit_seconds,
-                allow_fetch=not no_fetch,
-                refresh=refresh,
-            )
-            hitter_lookup = {
-                normalize_player_name(row["Name"]): row
-                for _, row in deadball_df.iterrows()
-                if str(row.get("Type", "")).lower() == "hitter"
-            }
-            pitcher_lookup = {
-                normalize_player_name(row["Name"]): row
-                for _, row in deadball_df.iterrows()
-                if str(row.get("Type", "")).lower() == "pitcher"
-            }
+            try:
+                deadball_df = load_deadball_source(
+                    team_code, season, postseason=False,
+                    rate_limit_seconds=rate_limit_seconds, allow_fetch=allow_network,
+                    refresh=refresh, trait_mode=trait_mode,
+                )
+            except FileNotFoundError as exc:
+                warnings.warn(
+                    f"{exc}; trying player career history, then provisional boxscore seasonStats",
+                    RuntimeWarning, stacklevel=2,
+                )
+                deadball_df = pd.DataFrame()
+            hitter_lookup, pitcher_lookup = {}, {}
+            for _, row in deadball_df.iterrows():
+                kind = str(row.get("Type", "")).lower()
+                if kind not in ("hitter", "pitcher"):
+                    continue
+                lookup = hitter_lookup if kind == "hitter" else pitcher_lookup
+                pid = _player_id(row.get("IDmlb"))
+                # Name lookup is only for legacy rows with no MLB identity.
+                key = f"id:{pid}" if pid else f"name:{normalize_player_name(row['Name'])}"
+                lookup[key] = row
             lookup_cache[team_code] = (hitter_lookup, pitcher_lookup)
         return lookup_cache[team_code]
 
+    def player_source(lookup: dict, player: dict, pitching: bool) -> dict:
+        person = player.get("person") or {}
+        pid = _player_id(person.get("id"))
+        source = lookup.get(f"id:{pid}") if pid else None
+        if source is None:
+            source = lookup.get(f"name:{normalize_player_name(person.get('fullName', ''))}")
+        if source is not None:
+            return source.to_dict()
+        if pid is not None and pid not in history_cache:
+            history_cache[pid] = career.load_history(
+                int(pid), season, team_stats.CACHE_ROOT / "career",
+                allow_network=allow_network, refresh=refresh,
+                fetch=lambda url: _fetch_with_rate_limit(
+                    url, rate_limit_seconds, "MLB career statistics",
+                    refresh_cache=True, allow_network=allow_network,
+                ),
+            )
+        source = _missing_player_source(player, pitching, trait_mode, history_cache.get(pid, {}))
+        stamp = career.snapshot_at(pid, season, team_stats.CACHE_ROOT / "career") if pid and history_cache.get(pid) else None
+        source.update(SnapshotAt=stamp, CacheStale=not cache_policy.is_fresh(season, stamp))
+        return source
+
     rows = []
     pitcher_names: set[str] = set()
-
-    def safe_float(val) -> float | None:
-        if val is None or val == "":
-            return None
-        try:
-            return float(val)
-        except (TypeError, ValueError):
-            return None
 
     for _, team_entry, team_name, team_abbr in team_entries:
         players = list((team_entry.get("players") or {}).values())
@@ -781,14 +770,11 @@ def build_deadball_for_game(
             if not name:
                 continue
             primary_pos, all_pos = mlb_positions(player, default="")
-            hr_val = safe_float(bat_stats.get("homeRuns")) or 0
-            doubles_val = safe_float(bat_stats.get("doubles")) or 0
-            sb_val = safe_float(bat_stats.get("stolenBases")) or 0
             norm_name = normalize_player_name(name)
-            source = hitter_lookup.get(norm_name, {})
+            source = player_source(hitter_lookup, player, pitching=False)
             bats_hand = clean_hand(source.get("Hand")) or clean_hand(source.get("LR")) or clean_hand(player.get("batSide", {}).get("code"))
             throws_hand = clean_hand(source.get("Throws")) or clean_hand(player.get("pitchHand", {}).get("code"))
-            if not bats_hand or not throws_hand:
+            if (not bats_hand or not throws_hand) and allow_network:
                 try:
                     year = int(date.split("-")[0])
                 except Exception:
@@ -823,12 +809,15 @@ def build_deadball_for_game(
                 "OBT": source.get("OBT"),
                 "AVG": source.get("AVG"),
                 "OBP": source.get("OBP"),
-                "HR": source.get("HR", hr_val),
-                "2B": source.get("2B", doubles_val),
-                "SB": source.get("SB", sb_val),
-                "G": source.get("G", 1),
+                "HR": source.get("HR"),
+                "2B": source.get("2B"),
+                "SB": source.get("SB"),
+                "G": source.get("G"),
                 "Traits": source.get("Traits", ""),
+                **{key: source.get(key) for key in RATING_METADATA},
             }
+            if _player_id(bat_row["IDmlb"]) is None:
+                bat_row["IDmlb"] = (player.get("person") or {}).get("id")
             rows.append(bat_row)
 
         for player in players:
@@ -839,22 +828,7 @@ def build_deadball_for_game(
             if not name:
                 continue
             pitcher_names.add(name)
-            ip = ip_to_float(pit_stats.get("inningsPitched"))
-            er = safe_float(pit_stats.get("earnedRuns"))
-            so = safe_float(pit_stats.get("strikeOuts"))
-            bb = safe_float(pit_stats.get("baseOnBalls"))
-            gb = safe_float(pit_stats.get("groundOuts"))
-            fb = safe_float(pit_stats.get("airOuts"))
-            gb_pct = None
-            if gb is not None and fb is not None and (gb + fb) > 0:
-                gb_pct = round((gb / (gb + fb)) * 100, 1)
-            era_game = None
-            if ip > 0 and er is not None:
-                era_game = float(er) * 9 / ip
-            k9 = float(so) * 9 / ip if ip > 0 and so is not None else None
-            bb9 = float(bb) * 9 / ip if ip > 0 and bb is not None else None
-            norm_name = normalize_player_name(name)
-            source = pitcher_lookup.get(norm_name, {})
+            source = player_source(pitcher_lookup, player, pitching=True)
             throws_hand = clean_hand(source.get("Throws")) or clean_hand(player.get("pitchHand", {}).get("code")) or clean_hand(player.get("batSide", {}).get("code"))
             if not throws_hand and allow_network:
                 pid = (player.get("person") or {}).get("id")
@@ -871,15 +845,18 @@ def build_deadball_for_game(
                 "Hand": throws_hand,
                 "Throws": throws_hand,
                 "Age": source.get("Age"),
-                "PD": source.get("PD", pitcher_die(era_game)),
-                "ERA": source.get("ERA", era_game),
-                "IP": source.get("IP", ip),
-                "K/9": source.get("K/9", k9),
-                "BB/9": source.get("BB/9", bb9),
-                "GB%": source.get("GB%", gb_pct),
-                "GS": source.get("GS", pit_stats.get("gamesStarted")),
+                "PD": source.get("PD"),
+                "ERA": source.get("ERA"),
+                "IP": source.get("IP"),
+                "K/9": source.get("K/9"),
+                "BB/9": source.get("BB/9"),
+                "GB%": source.get("GB%"),
+                "GS": source.get("GS"),
                 "Traits": source.get("Traits", ""),
+                **{key: source.get(key) for key in RATING_METADATA},
             }
+            if _player_id(pit_row["IDmlb"]) is None:
+                pit_row["IDmlb"] = (player.get("person") or {}).get("id")
             rows.append(pit_row)
 
     df_out = pd.DataFrame(rows)
@@ -901,11 +878,13 @@ def build_deadball_for_game(
         df_out["_bat_order_sort"] = df_out["BatOrder"].apply(bat_order_key)
         df_out = df_out.sort_values(["Team", "_type_order", "_bat_order_sort"], na_position="last").reset_index(drop=True)
         df_out = df_out.drop(columns=["_type_order", "_bat_order_sort"])
-        df_out = fill_missing_hands(df_out, season)
+        if allow_network:
+            df_out = fill_missing_hands(df_out, season)
     return df_out, team_labels
 
 
 def configure_parser(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--trait-mode", choices=rules.TRAIT_MODES, default="standard")
     parser.add_argument("--date", required=True, help="Game date in YYYY-MM-DD")
     parser.add_argument("--team", required=True, help="HOME team abbreviation (e.g., LAD for a home Dodgers game)")
     parser.add_argument("--output", default=None, help="Output CSV path")
@@ -914,13 +893,13 @@ def configure_parser(parser: argparse.ArgumentParser) -> None:
         "--box-file",
         type=Path,
         default=None,
-        help="Path to a local MLB boxscore JSON file (skip network entirely).",
+        help="Path to local MLB boxscore JSON; add --no-fetch to disable all network access.",
     )
-    parser.add_argument("--postseason", action="store_true", help="Treat the game as postseason; try constructed boxscore first")
+    parser.add_argument("--postseason", action="store_true", help="Compatibility flag; game ratings always use regular-season/career stats.")
     parser.add_argument(
         "--auto-postseason",
         action="store_true",
-        help="Use MLB Stats API to detect if the game is postseason (sets postseason when detected).",
+        help="Compatibility flag; boxscore participants need no postseason detection for ratings.",
     )
     parser.add_argument(
         "--rate-limit-seconds",
@@ -931,7 +910,7 @@ def configure_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--no-fetch",
         action="store_true",
-        help="Do not auto-download missing season/postseason sources; require them to exist locally.",
+        help="Use only cached regular-season sources; missing players receive provisional seasonStats ratings.",
     )
     parser.add_argument(
         "--refresh",
@@ -968,6 +947,7 @@ def main_from_parsed(args: argparse.Namespace) -> None:
         rate_limit_seconds=args.rate_limit_seconds,
         no_fetch=args.no_fetch,
         refresh=args.refresh,
+        trait_mode=args.trait_mode,
     )
     if df.empty:
         print(

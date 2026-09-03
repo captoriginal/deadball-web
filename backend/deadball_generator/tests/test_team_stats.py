@@ -1,4 +1,5 @@
 from copy import deepcopy
+from datetime import datetime, timezone
 from unittest.mock import Mock
 from urllib.parse import parse_qs, urlparse
 
@@ -46,6 +47,7 @@ def payload():
 def isolated(monkeypatch, tmp_path, payload):
     monkeypatch.setattr(stats, 'STAT_DIR', tmp_path / 'stats')
     monkeypatch.setattr(stats, 'DEADBALL_DIR', tmp_path / 'season')
+    monkeypatch.setattr(stats, 'CACHE_ROOT', tmp_path / 'cache')
     response = Mock()
     response.json.return_value = payload
     request = Mock(return_value=response)
@@ -75,6 +77,7 @@ def test_mlb_fallback_csv_and_deadball_roundtrip(isolated):
     assert bat.loc[0, 'FP'] == .995  # weighted chances across both positions
     assert pd.isna(bat.loc[1, 'FP'])
     assert bat.IDfg.isna().all() and pit.IDfg.isna().all()
+    assert bat.IDmlb.tolist() == [100, 101]
     assert pit['GB%'].isna().all()
     assert pit.loc[0, 'IP'] == pytest.approx(20 + 2 / 3)
     assert pit.loc[1, 'IP'] == 0
@@ -84,8 +87,9 @@ def test_mlb_fallback_csv_and_deadball_roundtrip(isolated):
     assert db.loc[0, 'Hand'] == 'S'
     assert db.loc[0, 'BT'] == 30 and db.loc[0, 'OBT'] == 36
     assert db.loc[2, 'Hand'] == 'L' and db.loc[2, 'PD'] == 'd12'
-    assert 'K+' in db.loc[2, 'Traits'] and 'CN+' in db.loc[2, 'Traits']
-    assert 'GB+' not in db.loc[2, 'Traits']
+    assert pd.isna(db.loc[2, 'Traits'])  # 20.2 IP without career history is provisional.
+    assert db.loc[2, 'Provisional']
+    assert db.loc[0, 'Provisional']  # 225 PA, no career history.
     assert db.loc[2, 'IP'] == pytest.approx(20 + 2 / 3)
     assert pd.isna(db.loc[3, 'PD'])
 
@@ -99,6 +103,49 @@ def test_cache_reuse_and_refresh(isolated):
     isolated.assert_not_called()
     stats.fetch_regular('SDP', 2026, refresh=True)
     isolated.assert_called_once()
+
+
+def test_current_season_regular_cache_refreshes_after_24_hours(isolated, monkeypatch):
+    now = datetime(2026, 7, 2, 12, tzinfo=timezone.utc).timestamp()
+    monkeypatch.setattr(stats.cache_policy, 'now_timestamp', lambda: now)
+    stats.fetch_regular('SDP', 2026)
+    for path in stats.stat_paths('SDP', 2026):
+        frame = pd.read_csv(path)
+        frame['StatsFetchedAt'] = now - stats.cache_policy.TTL_SECONDS
+        frame.to_csv(path, index=False)
+    stats.fg_batting_data.reset_mock()
+    isolated.reset_mock()
+
+    stats.fetch_regular('SDP', 2026)
+
+    stats.fg_batting_data.assert_called_once()
+    isolated.assert_called_once()
+    assert pd.read_csv(stats.stat_paths('SDP', 2026)[0]).StatsFetchedAt.eq(now).all()
+
+
+def test_current_season_postseason_cache_uses_same_ttl(monkeypatch, tmp_path):
+    now = datetime(2026, 10, 20, 12, tzinfo=timezone.utc).timestamp()
+    monkeypatch.setattr(stats, 'STAT_DIR', tmp_path)
+    monkeypatch.setattr(stats.cache_policy, 'now_timestamp', lambda: now)
+    batting = pd.DataFrame([{'Player': 'Hitter', 'IDmlb': 1, 'PA': 4, 'G': 1}])
+    pitching = pd.DataFrame([{'Player': 'Pitcher', 'IDmlb': 2, 'IP': 1, 'G': 1}])
+    source = Mock(side_effect=lambda *a, **kw: (batting.copy(), pitching.copy()))
+    monkeypatch.setattr(stats, '_mlb_postseason_stats', source)
+    monkeypatch.setattr(stats, 'hands_from_names', lambda *a, **kw: {})
+    monkeypatch.setattr(stats, 'resolve_hands', lambda *a, **kw: (None, None))
+
+    stats.fetch_postseason('SDP', 2026)
+    stats.fetch_postseason('SDP', 2026)
+    assert source.call_count == 1
+    for path in stats.stat_paths('SDP', 2026, postseason=True):
+        frame = pd.read_csv(path)
+        assert frame.StatsVersion.eq(stats.rules.RULES_VERSION).all()
+        frame['StatsFetchedAt'] = now - stats.cache_policy.TTL_SECONDS
+        frame.to_csv(path, index=False)
+
+    stats.fetch_postseason('SDP', 2026)
+
+    assert source.call_count == 2
 
 
 @pytest.mark.parametrize('invalid', ['Name,AVG\n', 'Name\nIncomplete\n', ''])

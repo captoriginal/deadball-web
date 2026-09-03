@@ -8,12 +8,11 @@ player records for a given team/season.
 from __future__ import annotations
 
 import json
-import tempfile
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from deadball_generator import rules
 from deadball_generator.stats_fetchers import team_stats
 
 
@@ -43,7 +42,10 @@ def _safe_float(val) -> Optional[float]:
         return None
 
 
-def convert_roster_from_season(team: str, season: int, allow_network: bool = True) -> Dict[str, Any]:
+def convert_roster_from_season(
+    team: str, season: int, allow_network: bool = True, trait_mode: str = "standard",
+    refresh: bool = False, rate_limit_seconds: float = 0.0,
+) -> Dict[str, Any]:
     """
     Build a Deadball roster for a single team/season using the generator's team stats builders.
 
@@ -53,23 +55,38 @@ def convert_roster_from_season(team: str, season: int, allow_network: bool = Tru
       "meta": {"description": "..."}
     }
     """
-    # build_deadball_regular writes CSV to disk; capture output path and load it back.
-    team_stats.build_deadball_regular(team, season)
+    rules.validate_mode(trait_mode)
+    if allow_network:
+        # Revalidate/upgrade old raw columns and StatsVersion before rebuilding.
+        team_stats.fetch_regular(team, season, rate_limit_seconds=rate_limit_seconds, refresh=refresh)
+    # The builder can use cached history offline, but must honor caller policy.
+    team_stats.build_deadball_regular(
+        team, season, trait_mode=trait_mode, allow_network=allow_network,
+        refresh=refresh, rate_limit_seconds=rate_limit_seconds,
+    )
     csv_path = team_stats.DEADBALL_DIR / f"{team.lower()}_{season}_deadball.csv"
     if not csv_path.exists():
-        return {"players": [], "meta": {"description": "No roster generated"}}
+        raise FileNotFoundError(f"No season roster generated for {team} {season}")
     df = pd.read_csv(csv_path)
+    if (df.empty or not {"RulesVersion", "TraitMode"}.issubset(df.columns)
+            or not df["RulesVersion"].eq(rules.RULES_VERSION).all()
+            or not df["TraitMode"].eq(trait_mode).all()):
+        raise ValueError(f"Season roster for {team} {season} has stale or missing rules metadata")
+    df = df.fillna("")
     players = _players_from_df(df, team, season)
     return {
         "players": players,
-        "meta": {"description": f"{team.upper()} {season} roster"},
+        "meta": {"description": f"{team.upper()} {season} roster",
+                 "rules_version": rules.RULES_VERSION, "trait_mode": trait_mode,
+                 "rating_basis": "regular-season/career"},
     }
 
 
-def convert_roster_from_payload(payload: str) -> Dict[str, Any]:
+def convert_roster_from_payload(payload: str, trait_mode: str = "standard") -> Dict[str, Any]:
     """
     Attempt to parse a JSON payload with players.
     """
+    rules.validate_mode(trait_mode)
     try:
         parsed = json.loads(payload)
     except json.JSONDecodeError:

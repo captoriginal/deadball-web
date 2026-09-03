@@ -2,8 +2,7 @@
 Adapter functions consumed by the FastAPI layer.
 
 These wrap the conversion helpers in `deadball_api.py`, which in turn can call
-into the real deadball conversion pipeline. Fallback behavior echoes raw input
-to avoid breaking the API when conversion fails.
+into the real deadball conversion pipeline. Season conversion errors propagate.
 """
 
 from __future__ import annotations
@@ -12,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import List, Optional
 
+from deadball_generator import rules
 from deadball_generator.deadball_api import convert_game, convert_roster
 
 
@@ -46,8 +46,11 @@ def generate_roster(
     name: str,
     description: Optional[str],
     public: bool,
+    trait_mode: str = "standard",
+    allow_network: bool = True,
 ) -> GeneratedRoster:
-    converted = convert_roster(mode=mode, payload=payload)
+    rules.validate_mode(trait_mode)
+    converted = convert_roster(mode=mode, payload=payload, trait_mode=trait_mode, allow_network=allow_network)
     converted_players = converted.get("players", []) if isinstance(converted, dict) else []
 
     players: List[GeneratedPlayer] = []
@@ -68,6 +71,8 @@ def generate_roster(
         )
 
     if not players:
+        if mode == "season":
+            raise ValueError("Season roster conversion returned no players")
         base = payload.strip() or "Sample"
         players = [
             GeneratedPlayer(
@@ -112,7 +117,10 @@ def generate_game_from_raw(
     away_team: str | None,
     raw_stats: str,
     allow_network: bool = True,
+    trait_mode: str = "standard",
+    refresh: bool = False,
 ) -> dict:
+    rules.validate_mode(trait_mode)
     return convert_game(
         game_id=game_id,
         raw_stats=raw_stats,
@@ -120,4 +128,6 @@ def generate_game_from_raw(
         home_team=home_team,
         away_team=away_team,
         allow_network=allow_network,
+        trait_mode=trait_mode,
+        refresh=refresh,
     )

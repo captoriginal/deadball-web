@@ -26,6 +26,8 @@ import requests
 from bs4 import BeautifulSoup, Comment
 
 from deadball_generator import paths
+from deadball_generator import rules, career, cache_policy
+from deadball_generator.rules import batter_traits, pitcher_traits, pitcher_die, target as fmt_two_digit
 from deadball_generator.paths import RETRO_POST_DIR
 
 # Local caches to avoid home-directory writes
@@ -41,9 +43,14 @@ for cache_dir in ("PYBASEBALL_CACHE", "MPLCONFIGDIR", "XDG_CACHE_HOME"):
 HAND_CACHE_FILE = CACHE_ROOT / "hands_cache.json"
 
 from pybaseball import fg_batting_data, fg_pitching_data  # type: ignore
+from pybaseball import cache as pybaseball_cache  # type: ignore
 from pybaseball.teamid_lookup import team_ids
 from pybaseball.datasources.fangraphs import fg_fielding_data  # type: ignore
 from pybaseball import playerid_reverse_lookup, playerid_lookup  # type: ignore
+
+# This project owns cache freshness explicitly; avoid pybaseball's separate
+# seven-day cache making a requested 24-hour refresh return older source data.
+pybaseball_cache.disable()
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; team-stat-fetcher/1.0)"}
 HAND_CACHE_FG: dict[int, tuple[Optional[str], Optional[str]]] = {}
@@ -405,7 +412,10 @@ def _save_hand_cache() -> None:
 
 # Only the columns needed for downstream Deadball builds.
 REQUIRED_BAT_COLS = [
+    "StatsVersion",
+    "StatsFetchedAt",
     "IDfg",
+    "IDmlb",
     "Name",
     "Age",
     "G",
@@ -428,12 +438,17 @@ REQUIRED_BAT_COLS = [
     "OPS",
     "Pos",
     "FP",
+    "ISO", "K%", "BsR", "DRS", "GoldGlove",
+    "HBP", "SF",
     "Hand",
     "LR",
     "Throws",
 ]
 REQUIRED_PIT_COLS = [
+    "StatsVersion",
+    "StatsFetchedAt",
     "IDfg",
+    "IDmlb",
     "Name",
     "Age",
     "G",
@@ -444,12 +459,16 @@ REQUIRED_PIT_COLS = [
     "BB/9",
     "GB%",
     "CG",
+    "Role",
     "Pos",
     "Hand",
     "Throws",
 ]
 REQUIRED_POST_BAT_COLS = [
+    "StatsVersion",
+    "StatsFetchedAt",
     "Player",
+    "IDmlb", "PA",
     "Age",
     "Pos",
     "G",
@@ -464,12 +483,15 @@ REQUIRED_POST_BAT_COLS = [
     "Throws",
 ]
 REQUIRED_POST_PIT_COLS = [
+    "StatsVersion",
+    "StatsFetchedAt",
     "Player",
+    "IDmlb", "G",
     "Age",
     "IP",
     "ERA",
-    "SO9",
-    "BB9",
+    "K/9",
+    "BB/9",
     "GB%",
     "GS",
     "Hand",
@@ -563,6 +585,7 @@ def _mlb_postseason_stats(team_code: str, season: int, rate_limit_seconds: float
             {"Player": name, "Pos": pos, "Hand": bats, "Throws": throws, "Team": team_code, "G": 0, "H": 0, "HR": 0, "2B": 0, "3B": 0, "SB": 0, "CS": 0, "BB": 0, "HBP": 0, "SF": 0, "SH": 0, "AB": 0, "PA": 0},
         )
         rec["G"] += 1
+        rec["IDmlb"] = int(pid)
         rec["H"] += stats.get("hits", 0)
         rec["HR"] += stats.get("homeRuns", 0)
         rec["2B"] += stats.get("doubles", 0)
@@ -582,6 +605,8 @@ def _mlb_postseason_stats(team_code: str, season: int, rate_limit_seconds: float
             {"Player": name, "Pos": pos or "P", "Hand": throws, "Throws": throws, "Team": team_code, "GS": 0, "IP": 0.0, "ER": 0, "SO": 0, "BB": 0, "GO": 0, "AO": 0},
         )
         rec["GS"] += stats.get("gamesStarted", 0)
+        rec["IDmlb"] = int(pid)
+        rec["G"] = rec.get("G", 0) + 1
         ip_str = stats.get("inningsPitched", "0.0")
         try:
             outs = int(ip_str.split(".")[0]) * 3 + int(ip_str.split(".")[1])
@@ -654,7 +679,7 @@ def _mlb_postseason_stats(team_code: str, season: int, rate_limit_seconds: float
         rec["ERA"] = (er * 9) / ip if ip else None
         rec["K/9"] = (so * 9) / ip if ip else None
         rec["BB/9"] = (bb * 9) / ip if ip else None
-        rec["GB%"] = (go / (go + ao)) * 100 if (go + ao) else None
+        rec["GB%"] = None  # Ground-out share is not ground-ball percentage.
         pit_rows.append(rec)
 
     bat_df = pd.DataFrame(bat_rows)
@@ -680,7 +705,7 @@ def retro_team_to_br(retro_code: str) -> str:
 
 
 def merge_fp(batting: pd.DataFrame, team: str, season: int, rate_limit_seconds: float = 0.0) -> pd.DataFrame:
-    if "FP" in batting.columns and batting["FP"].notna().any():
+    if all(c in batting and batting[c].notna().all() for c in ("FP", "DRS")):
         return batting
     if "IDfg" not in batting.columns or not batting["IDfg"].notna().any():
         return batting
@@ -693,9 +718,24 @@ def merge_fp(batting: pd.DataFrame, team: str, season: int, rate_limit_seconds: 
             split_seasons=False,
             qual=0,
         )
-        fp_lookup = fielding[["IDfg", "FP"]].groupby("IDfg", as_index=False).max()
+        # Weight positions by chances; never choose a player's best percentage.
+        aggregates = []
+        for fg_id, group in fielding.groupby("IDfg"):
+            if {"PO", "A", "E"}.issubset(group.columns):
+                totals = group[["PO", "A", "E"]].sum(min_count=len(group))
+                fp = career.fielding_percentage(totals)
+            else:
+                fp = group.iloc[0].get("FP") if len(group) == 1 else None
+            aggregates.append({"IDfg": fg_id, "FP": fp,
+                               "DRS": group["DRS"].sum(min_count=len(group)) if "DRS" in group else None})
+        fp_lookup = pd.DataFrame(aggregates)
         _maybe_sleep(rate_limit_seconds)
-        return batting.merge(fp_lookup, on="IDfg", how="left")
+        merged = batting.merge(fp_lookup, on="IDfg", how="left", suffixes=("", "_fielding"))
+        for column in ("FP", "DRS"):
+            if f"{column}_fielding" in merged:
+                merged[column] = merged[f"{column}_fielding"].combine_first(merged[column])
+                merged = merged.drop(columns=f"{column}_fielding")
+        return merged
     except Exception:
         return batting
 
@@ -749,10 +789,7 @@ def _mlb_regular_stats(team: str, season: int, rate_limit_seconds: float = 0.0) 
     for split in groups.get("fielding", []):
         pid = split["player"]["id"]
         stat = split["stat"]
-        totals = fielding.setdefault(pid, {"putouts": 0, "assists": 0, "errors": 0})
-        totals["putouts"] += stat.get("putOuts", 0)
-        totals["assists"] += stat.get("assists", 0)
-        totals["errors"] += stat.get("errors", 0)
+        fielding.setdefault(pid, []).append(stat)
 
     def number(value):
         try:
@@ -766,8 +803,8 @@ def _mlb_regular_stats(team: str, season: int, rate_limit_seconds: float = 0.0) 
         bats = (person.get("batSide") or {}).get("code")
         throws = (person.get("pitchHand") or {}).get("code")
         return {
-            "IDfg": None, "Name": person["fullName"], "Age": stat.get("age"),
-            "G": stat.get("gamesPlayed", 0),
+            "IDfg": None, "IDmlb": person["id"], "Name": person["fullName"], "Age": stat.get("age"),
+            "G": stat.get("gamesPlayed"),
             "Pos": "P" if pitching else (split.get("position") or person.get("primaryPosition") or {}).get("abbreviation", ""),
             "Hand": throws if pitching else bats, "LR": bats, "Throws": throws,
         }
@@ -781,15 +818,16 @@ def _mlb_regular_stats(team: str, season: int, rate_limit_seconds: float = 0.0) 
             "2B": "doubles", "3B": "triples", "HR": "homeRuns", "R": "runs",
             "RBI": "rbi", "BB": "baseOnBalls", "SO": "strikeOuts",
             "SB": "stolenBases", "CS": "caughtStealing",
+            "HBP": "hitByPitch", "SF": "sacFlies",
         }.items():
-            row[column] = stat.get(key, 0)
-        row["1B"] = row["H"] - row["2B"] - row["3B"] - row["HR"]
+            row[column] = stat.get(key)
+        hit_parts = [number(row[k]) for k in ("H", "2B", "3B", "HR")]
+        row["1B"] = hit_parts[0] - sum(hit_parts[1:]) if all(v is not None for v in hit_parts) else None
         for column in ("AVG", "OBP", "SLG", "OPS"):
             row[column] = number(stat.get(column.lower()))
-        totals = fielding.get(split["player"]["id"], {})
-        outs = totals.get("putouts", 0) + totals.get("assists", 0)
-        chances = outs + totals.get("errors", 0)
-        row["FP"] = outs / chances if chances else None
+        totals = {column: career._sum(fielding.get(split["player"]["id"], []), key)
+                  for column, key in {"PO": "putOuts", "A": "assists", "E": "errors"}.items()}
+        row["FP"] = career.fielding_percentage(totals)
         bat_rows.append(row)
 
     pit_rows = []
@@ -797,9 +835,9 @@ def _mlb_regular_stats(team: str, season: int, rate_limit_seconds: float = 0.0) 
         stat = split["stat"]
         row = identity(split, pitching=True)
         row.update({
-            "GS": stat.get("gamesStarted", 0), "CG": stat.get("completeGames", 0),
+            "GS": stat.get("gamesStarted"), "CG": stat.get("completeGames"),
             # Convert baseball's thirds-of-an-inning notation before CSV serialization.
-            "IP": ip_to_float(str(stat.get("inningsPitched", "0.0"))),
+            "IP": career.innings(stat.get("inningsPitched")),
             "ERA": number(stat.get("era")),
             "K/9": number(stat.get("strikeoutsPer9Inn")),
             "BB/9": number(stat.get("walksPer9Inn")), "GB%": None,
@@ -852,6 +890,7 @@ def _enrich_regular_hands(batting: pd.DataFrame, pitching: pd.DataFrame, season:
 def fetch_regular(team: str, season: int, rate_limit_seconds: float = 0.0, refresh: bool = False) -> None:
     bat_path, pit_path = stat_paths(team, season, postseason=False)
     batting = pitching = None
+    cached_stats = False
     if not refresh and bat_path.exists() and pit_path.exists():
         try:
             batting = pd.read_csv(bat_path)
@@ -860,9 +899,15 @@ def fetch_regular(team: str, season: int, rate_limit_seconds: float = 0.0, refre
                 batting.empty or pitching.empty
                 or not {"Name", "G", "AVG", "OBP", "HR", "2B", "SB"}.issubset(batting.columns)
                 or not {"Name", "ERA", "IP"}.issubset(pitching.columns)
+                or "StatsVersion" not in batting or "StatsVersion" not in pitching
+                or not batting["StatsVersion"].eq(rules.RULES_VERSION).all()
+                or not pitching["StatsVersion"].eq(rules.RULES_VERSION).all()
+                or not cache_policy.is_fresh(season, cache_policy.frame_snapshot(batting, "StatsFetchedAt"))
+                or not cache_policy.is_fresh(season, cache_policy.frame_snapshot(pitching, "StatsFetchedAt"))
             ):
                 raise ValueError("Incomplete cached regular-season statistics")
             print(f"[deadball] Using cached regular-season stats from {bat_path} and {pit_path}")
+            cached_stats = True
         except Exception:
             batting = pitching = None
 
@@ -883,6 +928,8 @@ def fetch_regular(team: str, season: int, rate_limit_seconds: float = 0.0, refre
             _maybe_sleep(rate_limit_seconds)
             if batting.empty or pitching.empty:
                 raise ValueError("Empty FanGraphs season statistics")
+            # FanGraphs IP is baseball notation; MLB's adapter already converts it.
+            pitching["IP"] = pitching["IP"].map(career.innings)
         except (requests.RequestException, ValueError) as exc:
             print(f"[deadball] FanGraphs unavailable ({exc}); using MLB season stats")
             try:
@@ -894,7 +941,15 @@ def fetch_regular(team: str, season: int, rate_limit_seconds: float = 0.0, refre
                 ) from mlb_exc
 
     _enrich_regular_hands(batting, pitching, season)
-    batting = merge_fp(batting, team, season, rate_limit_seconds=rate_limit_seconds)
+    if not cached_stats:
+        batting = merge_fp(batting, team, season, rate_limit_seconds=rate_limit_seconds)
+        # Timestamp actual acquisition, never a cache hit or a formatting rewrite.
+        batting["StatsFetchedAt"] = pitching["StatsFetchedAt"] = cache_policy.now_timestamp()
+    for frame, columns in ((batting, ("K%",)), (pitching, ("GB%",))):
+        for column in columns:
+            if column in frame:
+                frame[column] = frame[column].map(normalize_percentage)
+    batting["StatsVersion"] = pitching["StatsVersion"] = rules.RULES_VERSION
     batting["Pos"] = batting.get("Pos", "")
     batting["LR"] = batting.get("LR", batting.get("Hand"))
     batting = _trim_columns(batting, REQUIRED_BAT_COLS, defaults={"Pos": "", "Hand": None, "LR": None, "Throws": None})
@@ -906,6 +961,53 @@ def fetch_regular(team: str, season: int, rate_limit_seconds: float = 0.0, refre
     )
     save_csv(batting, bat_path)
     save_csv(pitching, pit_path)
+
+
+def normalize_percentage(value):
+    """Accept fractions or explicit percentage values at the ingestion boundary."""
+    explicit = isinstance(value, str) and "%" in value
+    parsed = rules.number(value.replace("%", "") if explicit else value)
+    if parsed is None:
+        return None
+    return parsed / 100 if explicit or parsed > 1 else parsed
+
+
+def _histories(batting, pitching, season, *, allow_network, refresh, rate_limit_seconds):
+    """Resolve stable IDs once, then share each player's history across both roles."""
+    frames = (batting, pitching)
+    for frame in frames:
+        if "IDmlb" not in frame:
+            frame["IDmlb"] = None
+    missing_fg = {int(r["IDfg"]) for frame in frames for _, r in frame.iterrows()
+                  if rules.number(r.get("IDmlb")) is None and rules.number(r.get("IDfg")) is not None}
+    id_path = CACHE_ROOT / "career" / "player_ids.json"
+    try:
+        ids = {int(k): int(v) for k, v in json.loads(id_path.read_text()).items()}
+    except (OSError, ValueError, TypeError, AttributeError):
+        ids = {}
+    missing_fg -= ids.keys()
+    if missing_fg and allow_network:
+        try:
+            lookup = playerid_reverse_lookup(sorted(missing_fg), key_type="fangraphs")
+            ids.update({int(r["key_fangraphs"]): int(r["key_mlbam"]) for _, r in lookup.iterrows()
+                        if rules.number(r.get("key_mlbam")) is not None and r["key_mlbam"] > 0})
+            id_path.parent.mkdir(parents=True, exist_ok=True)
+            id_path.write_text(json.dumps(ids))
+        except (requests.RequestException, ValueError, KeyError, TypeError, OSError):
+            pass
+    for frame in frames:
+        if "IDfg" in frame:
+            frame["IDmlb"] = frame["IDmlb"].combine_first(frame["IDfg"].map(ids))
+    histories = {}
+    for frame in frames:
+        for pid in frame["IDmlb"].dropna().unique():
+            if rules.number(pid) is None or int(pid) in histories:
+                continue
+            histories[int(pid)] = career.load_history(
+                pid, season, CACHE_ROOT / "career", allow_network=allow_network, refresh=refresh,
+                fetch=lambda url: _fetch_with_rate_limit(url, rate_limit_seconds, "MLB career statistics"),
+            )
+    return histories
 
 
 def _extract_table_html(soup: BeautifulSoup, keywords: list[str]) -> str:
@@ -939,11 +1041,23 @@ def _extract_table_html(soup: BeautifulSoup, keywords: list[str]) -> str:
 def fetch_postseason(team: str, season: int, rate_limit_seconds: float = 0.0, refresh: bool = False) -> None:
     bat_path, pit_path = stat_paths(team, season, postseason=True)
     batting = pitching = None
+    cached_stats = False
     if not refresh and bat_path.exists() and pit_path.exists():
         try:
             batting = pd.read_csv(bat_path)
             pitching = pd.read_csv(pit_path)
+            if (
+                batting.empty or pitching.empty
+                or not set(REQUIRED_POST_BAT_COLS).issubset(batting.columns)
+                or not set(REQUIRED_POST_PIT_COLS).issubset(pitching.columns)
+                or not batting["StatsVersion"].eq(rules.RULES_VERSION).all()
+                or not pitching["StatsVersion"].eq(rules.RULES_VERSION).all()
+                or not cache_policy.is_fresh(season, cache_policy.frame_snapshot(batting, "StatsFetchedAt"))
+                or not cache_policy.is_fresh(season, cache_policy.frame_snapshot(pitching, "StatsFetchedAt"))
+            ):
+                raise ValueError("Incomplete cached postseason statistics")
             print(f"[deadball] Using cached postseason stats from {bat_path} and {pit_path}")
+            cached_stats = True
         except Exception:
             batting = pitching = None
 
@@ -983,6 +1097,10 @@ def fetch_postseason(team: str, season: int, rate_limit_seconds: float = 0.0, re
     pitching["Hand"] = pitching[name_col_pit].map(lambda n: resolve_hands(n, None, {}, hand_lookup, season=season)[1])
     pitching["Throws"] = pitching["Hand"]
 
+    if not cached_stats:
+        fetched_at = cache_policy.now_timestamp()
+        batting["StatsFetchedAt"] = pitching["StatsFetchedAt"] = fetched_at
+    batting["StatsVersion"] = pitching["StatsVersion"] = rules.RULES_VERSION
     batting["Pos"] = batting.get("Pos", "")
     batting = _trim_columns(
         batting,
@@ -992,7 +1110,7 @@ def fetch_postseason(team: str, season: int, rate_limit_seconds: float = 0.0, re
     pitching = _trim_columns(
         pitching,
         REQUIRED_POST_PIT_COLS,
-        defaults={"Hand": None, "Throws": None, "SO9": None, "BB9": None, "GS": None, "GB%": None},
+        defaults={"Hand": None, "Throws": None, "K/9": None, "BB/9": None, "GS": None, "GB%": None},
     )
     if batting.empty or pitching.empty:
         print(f"[deadball] Postseason data empty after processing for {team} {season}; not writing CSVs.")
@@ -1001,15 +1119,6 @@ def fetch_postseason(team: str, season: int, rate_limit_seconds: float = 0.0, re
     save_csv(batting, bat_path)
     save_csv(pitching, pit_path)
 
-
-def fmt_two_digit(val) -> Optional[str]:
-    try:
-        fval = float(val)
-    except Exception:
-        return None
-    if pd.isna(fval):
-        return None
-    return f"{int(round(fval * 100)):02d}"
 
 
 def normalize_player_name(name: str) -> str:
@@ -1224,46 +1333,6 @@ def parse_positions(raw: Optional[str], default: str = "") -> tuple[str, str]:
     return seen[0], ",".join(seen)
 
 
-def batter_traits(row: pd.Series) -> list[str]:
-    traits: list[str] = []
-    hr = float(row.get("HR", 0) or 0)
-    doubles = float(row.get("2B", 0) or 0)
-    sb = float(row.get("SB", 0) or 0)
-    games = float(row.get("G", 1) or 1)
-    pos = str(row.get("Pos", "") or "")
-    fpct = row.get("FP")
-
-    if hr >= 35:
-        traits.append("P++")
-    elif hr >= 25:
-        traits.append("P+")
-    elif hr < 5:
-        traits.append("P−−")
-    elif 5 <= hr <= 10:
-        traits.append("P−")
-
-    if doubles >= 35:
-        traits.append("C+")
-    elif doubles < 10:
-        traits.append("C−")
-
-    if sb >= 20:
-        traits.append("S+")
-    elif sb == 0:
-        traits.append("S−")
-
-    if pd.notna(fpct):
-        if fpct >= 0.998:
-            traits.append("D+")
-        elif fpct < 0.950:
-            traits.append("D−")
-
-    threshold = 130 if "C" in pos else 150
-    if games >= threshold:
-        traits.append("T+")
-
-    return traits
-
 
 def ip_to_float(ip_val) -> float:
     if pd.isna(ip_val):
@@ -1283,58 +1352,55 @@ def ip_to_float(ip_val) -> float:
         return 0.0
 
 
-def pitcher_die(era: float) -> Optional[str]:
-    if pd.isna(era):
-        return None
-    if era < 2.0:
-        return "d20"
-    if era < 3.0:
-        return "d12"
-    if era < 4.0:
-        return "d8"
-    if era < 5.0:
-        return "d4"
-    if era < 6.0:
-        return "-d4"
-    if era < 7.0:
-        return "-d8"
-    if era < 8.0:
-        return "-d12"
-    return "-d20"
 
 
-def pitcher_traits(row: pd.Series) -> list[str]:
-    traits: list[str] = []
-    k9 = row.get("K/9")
-    gb_pct = row.get("GB%")
-    bb9 = row.get("BB/9")
-    ip = row.get("IP", 0) or 0
-    cg = row.get("CG", 0) or 0
-    if pd.notna(k9) and k9 >= 10:
-        traits.append("K+")
-    if pd.notna(gb_pct) and gb_pct >= 55:
-        traits.append("GB+")
-    if pd.notna(bb9) and bb9 < 2:
-        traits.append("CN+")
-    if pd.notna(bb9) and bb9 >= 4:
-        traits.append("CN−")
-    if ip >= 200 or cg > 0:
-        traits.append("ST+")
-    return traits
-
-
-def build_deadball_regular(team: str, season: int) -> None:
+def build_deadball_regular(team: str, season: int, *, trait_mode="standard", allow_network=False,
+                           refresh=False, rate_limit_seconds=0.0) -> None:
+    rules.validate_mode(trait_mode)
     bat = pd.read_csv(STAT_DIR / f"{team.lower()}_{season}_batting.csv")
     pit = pd.read_csv(STAT_DIR / f"{team.lower()}_{season}_pitching.csv")
-    _enrich_regular_hands(bat, pit, season)
+    obsolete = any("StatsVersion" not in frame or not frame["StatsVersion"].eq(rules.RULES_VERSION).all()
+                   for frame in (bat, pit))
+    expired = any(not cache_policy.is_fresh(season, cache_policy.frame_snapshot(frame, "StatsFetchedAt"))
+                  for frame in (bat, pit))
+    if obsolete or (expired and allow_network):
+        if not allow_network:
+            raise ValueError("Raw season caches use an obsolete schema/innings format; refresh online before an offline build")
+        fetch_regular(team, season, rate_limit_seconds=rate_limit_seconds, refresh=True)
+        bat, pit = (pd.read_csv(p) for p in stat_paths(team, season))
+    if allow_network:
+        _enrich_regular_hands(bat, pit, season)
+    histories = _histories(bat, pit, season, allow_network=allow_network, refresh=refresh,
+                           rate_limit_seconds=rate_limit_seconds)
+    timestamps = [cache_policy.frame_snapshot(frame, "StatsFetchedAt") for frame in (bat, pit)]
+    timestamps.extend(career.snapshot_at(pid, season, CACHE_ROOT / "career")
+                      for pid, history in histories.items() if history)
+    snapshot = cache_policy.oldest(timestamps)
     bat_rows = []
     for _, row in bat.iterrows():
+        pid = rules.number(row.get("IDmlb"))
+        history = histories.get(int(pid), {}) if pid is not None else {}
+        # Rate the whole player's season, not just a traded player's team stint.
+        annual = history.get("season_hitter", {})
+        row = row.copy()
+        traded = annual.get("Stints", 1) > 1
+        if traded:
+            for key, value in annual.items():
+                row[key] = value  # Missing all-team values cannot inherit team-only ones.
+            row["BsR"] = row["DRS"] = row["FP"] = None  # Team-only metrics are not comparable.
+        # For non-traded players retain one raw-season snapshot across all metrics.
+        if history.get("season_fielding") and (traded or rules.number(row.get("FP")) is None):
+            row["FP"] = history["season_fielding"].get("FP")
+        if history.get("season_fielding"):
+            if not row.get("Pos") or pd.isna(row.get("Pos")):
+                row["Pos"] = history["season_fielding"].get("Pos", "")
         primary_pos, all_pos = parse_positions(row.get("Pos"), default=row.get("Pos", ""))
         bats_hand = normalize_hand(row.get("Hand"))
         throws_hand = normalize_hand(row.get("Throws"))
         out_row = {
             "Type": "Hitter",
             "Name": row.get("Name"),
+            "IDmlb": row.get("IDmlb"),
             "Pos": primary_pos,
             "Positions": all_pos,
             "Age": row.get("Age"),
@@ -1351,15 +1417,25 @@ def build_deadball_regular(team: str, season: int) -> None:
             "G": row.get("G"),
             "Pos": primary_pos,
         }
-        out_row["Traits"] = " ".join(batter_traits(pd.Series({**row.to_dict(), **out_row})))
+        out_row.update(rules.evaluate_hitter({**row.to_dict(), **out_row}, trait_mode, history.get("hitter")))
         bat_rows.append(out_row)
 
     pit_rows = []
     for _, row in pit.iterrows():
+        pid = rules.number(row.get("IDmlb"))
+        history = histories.get(int(pid), {}) if pid is not None else {}
+        row = row.copy()
+        annual = history.get("season_pitcher", {})
+        if annual.get("Stints", 1) > 1:
+            for key, value in annual.items():
+                row[key] = value
+            row["GB%"] = None
+        row["GB%"] = normalize_percentage(row.get("GB%"))
         throws_hand = normalize_hand(row.get("Throws")) or normalize_hand(row.get("Hand"))
         out_row = {
             "Type": "Pitcher",
             "Name": row.get("Name"),
+            "IDmlb": row.get("IDmlb"),
             "Pos": row.get("Pos", "P") or "P",
             "Positions": row.get("Positions", row.get("Pos", "P")),
             "Age": row.get("Age"),
@@ -1372,129 +1448,74 @@ def build_deadball_regular(team: str, season: int) -> None:
             "BB/9": row.get("BB/9"),
             "GB%": row.get("GB%"),
             "GS": row.get("GS"),
+            "G": row.get("G"),
         }
-        out_row["Traits"] = " ".join(pitcher_traits(pd.Series({**row.to_dict(), **out_row})))
+        out_row.update(rules.evaluate_pitcher({**row.to_dict(), **out_row}, trait_mode, history.get("pitcher")))
         pit_rows.append(out_row)
 
     df = pd.DataFrame(bat_rows + pit_rows)
+    df["SnapshotAt"] = snapshot
+    df["CacheStale"] = not cache_policy.is_fresh(season, snapshot)
     # Standardize file name as TEAM_YEAR_deadball.csv
     season_path = DEADBALL_DIR / f"{team.lower()}_{season}_deadball.csv"
     save_csv(df, season_path)
 
 
-def build_deadball_postseason(team: str, season: int) -> None:
-    # Accept new standardized names first, with legacy fallbacks.
-    bat_candidates = [
-        STAT_DIR / f"{team.lower()}_{season}_batting_postseason.csv",
-        STAT_DIR / f"{team.lower()}_{season}_postseason_batting.csv",  # legacy
-    ]
-    pit_candidates = [
-        STAT_DIR / f"{team.lower()}_{season}_pitching_postseason.csv",
-        STAT_DIR / f"{team.lower()}_{season}_postseason_pitching.csv",  # legacy
-    ]
-
-    def _first_existing(paths):
-        for p in paths:
-            if p.exists():
-                return p
-        raise FileNotFoundError(paths[0])
-
-    bat = pd.read_csv(_first_existing(bat_candidates))
-    pit = pd.read_csv(_first_existing(pit_candidates))
-    bat = bat[~bat[bat.columns[0]].astype(str).str.contains("Totals", case=False, na=False)]
-    pit = pit[~pit[pit.columns[0]].astype(str).str.contains("Totals", case=False, na=False)]
-    hand_lookup = hands_from_names(list(bat.get("Player", pd.Series(dtype=str)).astype(str)) + list(pit.get("Player", pd.Series(dtype=str)).astype(str)), season=season)
-
-    # Load regular-season deadball to backfill BT when postseason AVG/BA are missing.
-    reg_bt_lookup: dict[str, object] = {}
-    reg_path = DEADBALL_DIR / f"{team.lower()}_{season}_deadball.csv"
-    if reg_path.exists():
-        try:
-            reg_df = pd.read_csv(reg_path)
-            reg_bt_lookup = {
-                normalize_player_name(row.get("Name")): row.get("BT")
-                for _, row in reg_df.iterrows()
-                if str(row.get("Type", "")).lower() == "hitter"
-            }
-        except Exception:
-            reg_bt_lookup = {}
-
-    bat_rows = []
-    for _, row in bat.iterrows():
-        primary_pos, all_pos = parse_positions(row.get("Pos"))
-        bats_hand, throws_hand = resolve_hands(
-            row.get("Player"),
-            None,
-            {},
-            hand_lookup,
-            season=season,
-        )
-        avg_val = row.get("BA")
-        if pd.isna(avg_val) or avg_val == "":
-            avg_val = row.get("AVG")
-        bt_val = fmt_two_digit(avg_val)
-        if bt_val is None:
-            bt_val = reg_bt_lookup.get(normalize_player_name(row.get("Player")))
-        out_row = {
-            "Type": "Hitter",
-            "Name": row.get("Player"),
-            "Pos": primary_pos,
-            "Positions": all_pos,
-            "Age": row.get("Age"),
-            "Hand": bats_hand,
-            "LR": bats_hand,
-            "Throws": throws_hand,
-            "BT": bt_val,
-            "OBT": fmt_two_digit(row.get("OBP")),
-            "AVG": avg_val,
-            "OBP": row.get("OBP"),
-            "HR": row.get("HR"),
-            "2B": row.get("2B"),
-            "SB": row.get("SB"),
-            "G": row.get("G"),
-        }
-        out_row["Traits"] = " ".join(batter_traits(pd.Series({**row.to_dict(), **out_row})))
-        bat_rows.append(out_row)
-
-    pit_rows = []
-    for _, row in pit.iterrows():
-        ip_val = ip_to_float(row.get("IP"))
-        so9 = row.get("SO9") if "SO9" in pit.columns else row.get("SO9") if "SO9" in row else None
-        bb9 = row.get("BB9") if "BB9" in pit.columns else None
-        bats_hand, throws_hand = resolve_hands(
-            row.get("Player"),
-            None,
-            {},
-            hand_lookup,
-            season=season,
-        )
-        out_row = {
-            "Type": "Pitcher",
-            "Name": row.get("Player"),
-            "Pos": "P",
-            "Positions": "P",
-            "Age": row.get("Age"),
-            "Hand": throws_hand,
-            "Throws": throws_hand,
-            "PD": pitcher_die(row.get("ERA") if pd.notna(row.get("ERA")) else None),
-            "ERA": row.get("ERA"),
-            "IP": ip_val,
-            "K/9": so9,
-            "BB/9": bb9,
-            "GB%": row.get("GB%") if "GB%" in pit.columns else None,
-            "GS": row.get("GS") if "GS" in pit.columns else None,
-        }
-        out_row["Traits"] = " ".join(pitcher_traits(pd.Series({**row.to_dict(), **out_row})))
-        pit_rows.append(out_row)
-
-    df = pd.DataFrame(bat_rows + pit_rows)
-    # Standardize file name as TEAM_YEAR_deadball_postseason.csv
-    save_csv(df, DEADBALL_DIR / f"{team.lower()}_{season}_deadball_postseason.csv")
+def build_deadball_postseason(team: str, season: int, *, trait_mode="standard", allow_network=False,
+                              refresh=False, rate_limit_seconds=0.0) -> None:
+    """Postseason participants retain regular-season/career ratings."""
+    rules.validate_mode(trait_mode)
+    reg_path = deadball_paths(team, season)[0]
+    build_deadball_regular(team, season, trait_mode=trait_mode, allow_network=allow_network,
+                           refresh=refresh, rate_limit_seconds=rate_limit_seconds)
+    regular = pd.read_csv(reg_path)
+    batting, pitching = (pd.read_csv(p) for p in stat_paths(team, season, postseason=True))
+    postseason_expired = any(
+        not cache_policy.is_fresh(season, cache_policy.frame_snapshot(frame, "StatsFetchedAt"))
+        for frame in (batting, pitching)
+    )
+    if postseason_expired and allow_network:
+        fetch_postseason(team, season, rate_limit_seconds=rate_limit_seconds, refresh=True)
+        batting, pitching = (pd.read_csv(p) for p in stat_paths(team, season, postseason=True))
+    histories = _histories(batting, pitching, season, allow_network=allow_network,
+                           refresh=refresh, rate_limit_seconds=rate_limit_seconds)
+    timestamps = [cache_policy.frame_snapshot(regular), *(
+        cache_policy.frame_snapshot(frame, "StatsFetchedAt") for frame in (batting, pitching)
+    )]
+    timestamps.extend(career.snapshot_at(pid, season, CACHE_ROOT / "career")
+                      for pid, history in histories.items() if history)
+    snapshot = cache_policy.oldest(timestamps)
+    result = []
+    for frame, kind in ((batting, "Hitter"), (pitching, "Pitcher")):
+        for _, raw in frame.iterrows():
+            name = raw.get("Player", raw.get("Name"))
+            pid = rules.number(raw.get("IDmlb"))
+            candidates = regular[regular["Type"] == kind]
+            matches = candidates[candidates["IDmlb"] == pid] if pid is not None else candidates[candidates["Name"] == name]
+            if not matches.empty:
+                out = matches.iloc[0].to_dict()
+            else:
+                history = histories.get(int(pid), {}) if pid is not None else {}
+                # No postseason stat line is used to infer season ability.
+                sample = {"Name": name, "IDmlb": pid, "Pos": raw.get("Pos"),
+                          **history.get("season_hitter" if kind == "Hitter" else "season_pitcher", {})}
+                if kind == "Hitter" and history.get("season_fielding"):
+                    sample["FP"] = history["season_fielding"].get("FP")
+                evaluate = rules.evaluate_hitter if kind == "Hitter" else rules.evaluate_pitcher
+                out = {**sample, "Type": kind, "Hand": raw.get("Hand"), "Throws": raw.get("Throws"),
+                       **evaluate(sample, trait_mode, history.get("hitter" if kind == "Hitter" else "pitcher"))}
+            out["RatingBasis"] = "regular-season/career"
+            result.append(out)
+    result_frame = pd.DataFrame(result)
+    result_frame["SnapshotAt"] = snapshot
+    result_frame["CacheStale"] = not cache_policy.is_fresh(season, snapshot)
+    save_csv(result_frame, deadball_paths(team, season, postseason=True)[0])
 
 
 def configure_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--team", required=True, help="Team abbreviation, e.g., LAD")
     parser.add_argument("--season", type=int, required=True, help="Season year, e.g., 2025")
+    parser.add_argument("--trait-mode", choices=rules.TRAIT_MODES, default="standard")
     parser.add_argument(
         "--rate-limit-seconds",
         type=float,
@@ -1516,13 +1537,15 @@ def configure_parser(parser: argparse.ArgumentParser) -> None:
 def main_from_parsed(args: argparse.Namespace) -> None:
     team = args.team.upper()
     fetch_regular(team, args.season, rate_limit_seconds=args.rate_limit_seconds, refresh=args.refresh)
-    build_deadball_regular(team, args.season)
+    build_deadball_regular(team, args.season, trait_mode=args.trait_mode, allow_network=True,
+                           refresh=args.refresh, rate_limit_seconds=args.rate_limit_seconds)
     if not args.skip_postseason:
         try:
             fetch_postseason(team, args.season, rate_limit_seconds=args.rate_limit_seconds, refresh=args.refresh)
             post_bat, post_pit = stat_paths(team, args.season, postseason=True)
             if post_bat.exists() and post_pit.exists():
-                build_deadball_postseason(team, args.season)
+                build_deadball_postseason(team, args.season, trait_mode=args.trait_mode, allow_network=True,
+                                          refresh=args.refresh, rate_limit_seconds=args.rate_limit_seconds)
             else:
                 print(f"[deadball] No postseason stat files for {team} {args.season}; skipping postseason build.")
         except RuntimeError as exc:
