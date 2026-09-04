@@ -573,16 +573,24 @@ def get_play_game(
     try:
         parsed = json.loads(generated.stats)
         trait_mode = parsed.get("meta", {}).get("trait_mode", "standard")
-        regenerated = generate_game_from_raw(
-            game_id=game.game_id,
-            date=str(game.game_date),
-            home_team=game.home_team,
-            away_team=game.away_team,
-            raw_stats=raw.payload,
-            allow_network=False,
-            trait_mode=trait_mode,
-        )
-        return build_generator_game(regenerated["stats"], **arguments).to_dict()
+        for include_reserves in (True, False):
+            regenerated = generate_game_from_raw(
+                game_id=game.game_id,
+                date=str(game.game_date),
+                home_team=game.home_team,
+                away_team=game.away_team,
+                raw_stats=raw.payload,
+                allow_network=False,
+                trait_mode=trait_mode,
+                include_reserves=include_reserves,
+            )
+            try:
+                return build_generator_game(
+                    regenerated["stats"], **arguments
+                ).to_dict()
+            except (TypeError, ValueError, json.JSONDecodeError):
+                if not include_reserves:
+                    raise
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

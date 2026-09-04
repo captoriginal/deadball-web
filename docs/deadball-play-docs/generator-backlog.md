@@ -15,6 +15,11 @@ silently expanding a rules-engine phase.
 - Export a canonical schema-v1 game through the web API and generator UI.
 - Load a game directly from the local web-generator cache in the terminal.
 - Regenerate incompatible old artifacts offline from cached raw boxscores.
+- Include unused players named by MLB's `bench` and `bullpen` lists.
+- Supply non-DH pitchers with available batting handedness, BT, OBT, and traits.
+- Preserve initial alignment through position switches, DH field moves, double
+  switches, and two-way player records.
+- Exercise the complete offline handoff with sanitized MLB-shaped fixtures.
 
 ## Future Work
 
@@ -35,39 +40,6 @@ The current integration exposes this contract through
 `deadball_core.game_data.build_generator_game`. A future generator-native
 export could remove the legacy flat-row conversion entirely.
 
-### Include the Complete Available Roster
-
-Current game exports focus on participants. Export every player available for
-the tabletop game, including unused:
-
-- bench players
-- starting pitchers
-- relief pitchers
-
-Without this, Deadball Play can initialize and resolve ordinary at-bats but
-cannot offer every intended substitution.
-
-### Supply Batting Ratings for Non-DH Pitchers
-
-When `designated_hitter` is false, every pitcher who can occupy the preserved
-pitcher lineup slot needs `bats`, `bt`, and `obt` in addition to pitching data.
-The Phase 8 engine preserves that slot and installs relief pitchers correctly,
-but it cannot resolve their plate appearances unless the generator supplies
-those batting ratings.
-
-### Make Initial Alignment Independent of Final Boxscore State
-
-Add regression fixtures for games containing:
-
-- defensive position switches
-- pinch hitters and pinch runners
-- double switches
-- a DH moved into the field
-- two-way players
-
-The generated starting lineup and defense must describe the beginning of the
-game, while later appearances remain roster/history information.
-
 ### Refresh Obsolete Caches Persistently
 
 Older generated rows may lack `IDmlb`, rules metadata, or current rating fields.
@@ -75,13 +47,3 @@ The Play API and launcher now regenerate compatible data from cached raw
 boxscores in memory or reject the artifact clearly. A future cache migration can
 persist refreshed artifacts deliberately; player names must not become fallback
 identities.
-
-### Add End-to-End Contract Fixtures
-
-Keep sanitized MLB boxscore fixtures that exercise:
-
-```text
-boxscore -> generator -> schema-v1 adapter -> initial game state
-```
-
-These tests should run without live network access or mutable production data.

@@ -5,6 +5,7 @@ from pathlib import Path
 import random
 import sqlite3
 import sys
+from unittest.mock import Mock
 
 from deadball_core import (
     RandomDice,
@@ -289,4 +290,61 @@ def test_local_web_cache_loads_as_canonical_game_without_writes(tmp_path):
 
     assert game.game.game_id == "mlb-123"
     assert game.teams.away.short_name == "VIS"
+    assert database.read_bytes() == before
+
+
+def test_old_cache_retries_without_unrated_reserves_and_never_writes_database(
+    tmp_path, monkeypatch
+):
+    database = tmp_path / "web.db"
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        """
+        CREATE TABLE game (
+            id INTEGER PRIMARY KEY, game_id TEXT, game_date TEXT,
+            away_team TEXT, home_team TEXT,
+            away_team_short TEXT, home_team_short TEXT
+        );
+        CREATE TABLE gamegenerated (
+            id INTEGER PRIMARY KEY, game_id INTEGER, stats TEXT
+        );
+        CREATE TABLE gamerawstats (
+            id INTEGER PRIMARY KEY, game_id INTEGER, payload TEXT
+        );
+        """
+    )
+    connection.execute(
+        "INSERT INTO game VALUES (1, '123', '2026-08-15', "
+        "'Visitors', 'Hosts', 'VIS', 'HST')"
+    )
+    connection.execute("INSERT INTO gamegenerated VALUES (1, 1, '{}')")
+    connection.execute("INSERT INTO gamerawstats VALUES (1, 1, '{}')")
+    connection.commit()
+    connection.close()
+    before = database.read_bytes()
+    valid_stats = {
+        "players": [
+            *generator_rows("Visitors", 100),
+            *generator_rows("Hosts", 200),
+        ],
+        "teams": {"away_abbr": "VIS", "home_abbr": "HST"},
+    }
+
+    def regenerate(**kwargs):
+        if kwargs["include_reserves"]:
+            return {"stats": '{"players": []}'}
+        return {"stats": json.dumps(valid_stats)}
+
+    generate = Mock(side_effect=regenerate)
+    monkeypatch.setattr(
+        "deadball_generator.generator.generate_game_from_raw", generate
+    )
+
+    game = load_cached_game("123", database)
+
+    assert game.teams.away.short_name == "VIS"
+    assert [call.kwargs["include_reserves"] for call in generate.call_args_list] == [
+        True,
+        False,
+    ]
     assert database.read_bytes() == before

@@ -67,16 +67,22 @@ def load_cached_game(game_id: str, database: str | Path) -> GeneratedGame:
 
         old_stats = json.loads(row["stats"])
         trait_mode = old_stats.get("meta", {}).get("trait_mode", "standard")
-        regenerated = generate_game_from_raw(
-            game_id=row["game_id"],
-            date=row["game_date"],
-            home_team=row["home_team"],
-            away_team=row["away_team"],
-            raw_stats=row["raw_payload"],
-            allow_network=False,
-            trait_mode=trait_mode,
-        )
-        return build_generator_game(regenerated["stats"], **arguments)
+        for include_reserves in (True, False):
+            regenerated = generate_game_from_raw(
+                game_id=row["game_id"],
+                date=row["game_date"],
+                home_team=row["home_team"],
+                away_team=row["away_team"],
+                raw_stats=row["raw_payload"],
+                allow_network=False,
+                trait_mode=trait_mode,
+                include_reserves=include_reserves,
+            )
+            try:
+                return build_generator_game(regenerated["stats"], **arguments)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                if not include_reserves:
+                    raise
     except ImportError as exc:
         raise CachedGameError(
             "this cached game needs regeneration; run through the repository "

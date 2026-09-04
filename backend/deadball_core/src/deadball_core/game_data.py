@@ -204,6 +204,14 @@ def validate_generated_game(game: GeneratedGame) -> None:
                 raise GameDataError(
                     f"{path}.pitcher {player.player_id} requires position P, throws, and pitch_die"
                 )
+            if (
+                not game.rules.designated_hitter
+                and player.role in {"starter", "reliever"}
+                and (player.bats is None or player.bt is None or player.obt is None)
+            ):
+                raise GameDataError(
+                    f"{path}.non-DH pitcher {player.player_id} requires bats, bt, and obt"
+                )
 
         slots = [entry.slot for entry in team.lineup]
         if slots != list(range(1, 10)):
@@ -447,12 +455,21 @@ def _adapt_team_rows(
         })
         positions = _legacy_positions(row.get("Positions") or row.get("Pos"))
         entry["positions"] = list(dict.fromkeys([*entry["positions"], *positions]))
-        entry["traits"] = list(dict.fromkeys([*entry["traits"], *_legacy_traits(row.get("Traits"))]))
+        entry["traits"] = list(dict.fromkeys([
+            *entry["traits"],
+            *_legacy_traits(row.get("Traits")),
+            *_legacy_traits(row.get("BattingTraits")),
+        ]))
 
         row_type = str(row.get("Type", "")).strip().casefold()
         if row_type == "pitcher":
             entry["role"] = "starter" if player_id == starter_id else "reliever"
+            entry["bats"] = entry.get("bats") or _optional_upper(row.get("Bats"))
             entry["throws"] = _optional_upper(row.get("Throws") or row.get("Hand"))
+            if entry.get("bt") is None:
+                entry["bt"] = _legacy_target(row.get("BT"))
+            if entry.get("obt") is None:
+                entry["obt"] = _legacy_target(row.get("OBT"))
             entry["pitch_die"] = _optional_text(row.get("PD"))
             if "P" not in entry["positions"]:
                 entry["positions"].append("P")

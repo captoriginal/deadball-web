@@ -119,6 +119,7 @@ def generate_game_from_raw(
     allow_network: bool = True,
     trait_mode: str = "standard",
     refresh: bool = False,
+    include_reserves: bool = True,
 ) -> dict:
     rules.validate_mode(trait_mode)
     return convert_game(
@@ -130,4 +131,5 @@ def generate_game_from_raw(
         allow_network=allow_network,
         trait_mode=trait_mode,
         refresh=refresh,
+        include_reserves=include_reserves,
     )

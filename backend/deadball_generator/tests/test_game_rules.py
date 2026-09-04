@@ -338,6 +338,7 @@ def test_game_json_metadata_and_mode_forwarding(monkeypatch):
     assert json.loads(result["stats"])["meta"] == {
         "rules_version": rules.RULES_VERSION, "trait_mode": "sabr",
         "rating_basis": "regular-season/career", "snapshot_at": 1735689600, "stale": False,
+        "roster_scope": "available",
     }
     assert not captured_paths[0].exists()
 

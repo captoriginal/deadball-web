@@ -3,7 +3,7 @@ Generate deadball-style stats for a single game by date and team (team must be t
 
 Given a date (YYYY-MM-DD) and a team abbreviation (e.g., LAD), the script:
 1. Uses the MLB Stats API to find the game and pull the boxscore JSON.
-2. Builds a deadball CSV for all players who appeared, keeping batting order.
+2. Builds a Deadball CSV for the complete boxscore roster, keeping batting order.
 3. Generates a filled scorecard HTML alongside the CSV (unless --skip-scorecard).
 """
 from __future__ import annotations
@@ -482,6 +482,17 @@ def mlb_team_label(team_entry: dict) -> tuple[str, str]:
     return name, abbr
 
 
+def mlb_roster_ids(team_entry: dict, *groups: str) -> set[str]:
+    """Return normalized player IDs from MLB team roster groups."""
+    ids: set[str] = set()
+    for group in groups:
+        for value in team_entry.get(group) or []:
+            player_id = _player_id(value)
+            if player_id is not None:
+                ids.add(player_id)
+    return ids
+
+
 def mlb_person_hands(
     person_id: int | None,
     rate_limit_seconds: float = 0.0,
@@ -636,6 +647,7 @@ def build_deadball_for_game(
     no_fetch: bool = False,
     refresh: bool = False,
     trait_mode: str = "standard",
+    include_reserves: bool = True,
 ) -> tuple[pd.DataFrame, dict[str, str]]:
     rules.validate_mode(trait_mode)
     if box_file and box_url_override:
@@ -751,21 +763,30 @@ def build_deadball_for_game(
         return source
 
     rows = []
-    pitcher_names: set[str] = set()
-
     for _, team_entry, team_name, team_abbr in team_entries:
         players = list((team_entry.get("players") or {}).values())
         hitter_lookup, pitcher_lookup = get_lookups(team_name, team_abbr)
+        hitter_groups = ("batters", "bench") if include_reserves else ("batters",)
+        pitcher_groups = ("pitchers", "bullpen") if include_reserves else ("pitchers",)
+        available_hitters = mlb_roster_ids(team_entry, *hitter_groups)
+        available_pitchers = mlb_roster_ids(team_entry, *pitcher_groups)
 
         hitters: list[tuple[float, str, dict, dict]] = []
         for player in players:
             bat_stats = player.get("stats", {}).get("batting") or {}
             bat_order, sort_key = mlb_batting_order(player.get("battingOrder"))
-            if bat_order is None:
+            person_id = _player_id((player.get("person") or {}).get("id"))
+            if bat_order is None and person_id not in available_hitters:
                 continue
-            hitters.append((sort_key, bat_order, player, bat_stats))
+            hitters.append((sort_key, bat_order or "", player, bat_stats))
 
         hitters.sort(key=lambda t: (t[0], t[2].get("person", {}).get("fullName", "")))
+        uses_designated_hitter = any(
+            mlb_positions(player)[0] == "DH"
+            and mlb_batting_order(player.get("battingOrder"))[0] is not None
+            and mlb_batting_order(player.get("battingOrder"))[1].is_integer()
+            for _, _, player, _ in hitters
+        )
 
         for _, bat_order, player, bat_stats in hitters:
             name = player.get("person", {}).get("fullName") or ""
@@ -824,12 +845,12 @@ def build_deadball_for_game(
 
         for player in players:
             pit_stats = player.get("stats", {}).get("pitching") or {}
-            if not pit_stats:
+            person_id = _player_id((player.get("person") or {}).get("id"))
+            if not pit_stats and person_id not in available_pitchers:
                 continue
             name = (player.get("person", {}) or {}).get("fullName") or ""
             if not name:
                 continue
-            pitcher_names.add(name)
             source = player_source(pitcher_lookup, player, pitching=True)
             throws_hand = clean_hand(source.get("Throws")) or clean_hand(player.get("pitchHand", {}).get("code")) or clean_hand(player.get("batSide", {}).get("code"))
             if not throws_hand and allow_network:
@@ -837,6 +858,17 @@ def build_deadball_for_game(
                 _, t4 = mlb_person_hands(pid, rate_limit_seconds=rate_limit_seconds, allow_network=allow_network, refresh=refresh)
                 throws_hand = throws_hand or t4
             primary_pos, all_pos = mlb_positions(player, default="P")
+            batting = {}
+            if not uses_designated_hitter:
+                batting_source = player_source(hitter_lookup, player, pitching=False)
+                batting = {
+                    "Bats": clean_hand(batting_source.get("Hand"))
+                    or clean_hand(batting_source.get("LR"))
+                    or clean_hand(player.get("batSide", {}).get("code")),
+                    "BT": batting_source.get("BT"),
+                    "OBT": batting_source.get("OBT"),
+                    "BattingTraits": batting_source.get("Traits", ""),
+                }
             pit_row = {
                 "Type": "Pitcher",
                 "Team": team_name,
@@ -856,6 +888,7 @@ def build_deadball_for_game(
                 "GS": source.get("GS"),
                 "GameStarted": bool(pit_stats.get("gamesStarted")),
                 "Traits": source.get("Traits", ""),
+                **batting,
                 **{key: source.get(key) for key in RATING_METADATA},
             }
             if _player_id(pit_row["IDmlb"]) is None:
@@ -863,9 +896,6 @@ def build_deadball_for_game(
             rows.append(pit_row)
 
     df_out = pd.DataFrame(rows)
-    if not df_out.empty and pitcher_names:
-        drop_mask = (df_out["Type"] == "Hitter") & (df_out["Pos"] == "P") & (df_out["Name"].isin(pitcher_names))
-        df_out = df_out[~drop_mask]
     pitcher_cols = ["PD", "ERA", "IP", "K/9", "BB/9", "GB%", "GS"]
     if not df_out.empty:
         hitter_mask = df_out["Type"] == "Hitter"

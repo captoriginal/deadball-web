@@ -1,0 +1,50 @@
+{
+  "teams": {
+    "away": {
+      "team": {"name": "Sanitized Comets", "abbreviation": "LAD"},
+      "batters": [1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010],
+      "bench": [1011],
+      "pitchers": [1090, 1091],
+      "bullpen": [1092],
+      "players": {
+        "ID1001": {"person": {"id": 1001, "fullName": "Comet Catcher"}, "position": {"abbreviation": "C"}, "allPositions": [{"abbreviation": "C"}], "batSide": {"code": "R"}, "pitchHand": {"code": "R"}, "battingOrder": "100", "stats": {"batting": {}}},
+        "ID1002": {"person": {"id": 1002, "fullName": "Comet First"}, "position": {"abbreviation": "1B"}, "allPositions": [{"abbreviation": "1B"}], "batSide": {"code": "L"}, "pitchHand": {"code": "R"}, "battingOrder": "200", "stats": {"batting": {}}},
+        "ID1003": {"person": {"id": 1003, "fullName": "Comet Second"}, "position": {"abbreviation": "2B"}, "allPositions": [{"abbreviation": "2B"}], "batSide": {"code": "R"}, "pitchHand": {"code": "R"}, "battingOrder": "300", "stats": {"batting": {}}},
+        "ID1004": {"person": {"id": 1004, "fullName": "Comet Third"}, "position": {"abbreviation": "3B"}, "allPositions": [{"abbreviation": "3B"}], "batSide": {"code": "R"}, "pitchHand": {"code": "R"}, "battingOrder": "400", "stats": {"batting": {}}},
+        "ID1005": {"person": {"id": 1005, "fullName": "Comet Short"}, "position": {"abbreviation": "2B"}, "allPositions": [{"abbreviation": "SS"}, {"abbreviation": "2B"}], "batSide": {"code": "S"}, "pitchHand": {"code": "R"}, "battingOrder": "500", "stats": {"batting": {}}},
+        "ID1006": {"person": {"id": 1006, "fullName": "Comet Left"}, "position": {"abbreviation": "LF"}, "allPositions": [{"abbreviation": "LF"}], "batSide": {"code": "L"}, "pitchHand": {"code": "R"}, "battingOrder": "600", "stats": {"batting": {}}},
+        "ID1007": {"person": {"id": 1007, "fullName": "Comet Center"}, "position": {"abbreviation": "CF"}, "allPositions": [{"abbreviation": "CF"}], "batSide": {"code": "R"}, "pitchHand": {"code": "R"}, "battingOrder": "700", "stats": {"batting": {}}},
+        "ID1008": {"person": {"id": 1008, "fullName": "Comet Right"}, "position": {"abbreviation": "RF"}, "allPositions": [{"abbreviation": "RF"}], "batSide": {"code": "R"}, "pitchHand": {"code": "R"}, "battingOrder": "800", "stats": {"batting": {}}},
+        "ID1009": {"person": {"id": 1009, "fullName": "Comet Designated"}, "position": {"abbreviation": "LF"}, "allPositions": [{"abbreviation": "DH"}, {"abbreviation": "LF"}], "batSide": {"code": "L"}, "pitchHand": {"code": "R"}, "battingOrder": "900", "stats": {"batting": {}, "pitching": {"inningsPitched": "1.0"}}},
+        "ID1010": {"person": {"id": 1010, "fullName": "Comet Substitute"}, "position": {"abbreviation": "SS"}, "allPositions": [{"abbreviation": "SS"}], "batSide": {"code": "R"}, "pitchHand": {"code": "R"}, "battingOrder": "501", "stats": {"batting": {}}},
+        "ID1011": {"person": {"id": 1011, "fullName": "Comet Reserve"}, "position": {"abbreviation": "C"}, "allPositions": [], "batSide": {"code": "R"}, "pitchHand": {"code": "R"}, "stats": {"batting": {}}},
+        "ID1090": {"person": {"id": 1090, "fullName": "Comet Starter"}, "position": {"abbreviation": "P"}, "allPositions": [{"abbreviation": "P"}], "batSide": {"code": "R"}, "pitchHand": {"code": "R"}, "stats": {"pitching": {"gamesStarted": 1, "inningsPitched": "6.0"}}},
+        "ID1091": {"person": {"id": 1091, "fullName": "Comet Used Reliever"}, "position": {"abbreviation": "P"}, "allPositions": [{"abbreviation": "P"}], "batSide": {"code": "L"}, "pitchHand": {"code": "L"}, "stats": {"pitching": {"inningsPitched": "2.0"}}},
+        "ID1092": {"person": {"id": 1092, "fullName": "Comet Fresh Reliever"}, "position": {"abbreviation": "P"}, "allPositions": [], "batSide": {"code": "R"}, "pitchHand": {"code": "R"}, "stats": {"pitching": {}}}
+      }
+    },
+    "home": {
+      "team": {"name": "Sanitized Pilots", "abbreviation": "NYY"},
+      "batters": [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010],
+      "bench": [2011],
+      "pitchers": [2090, 2091],
+      "bullpen": [2092],
+      "players": {
+        "ID2001": {"person": {"id": 2001, "fullName": "Pilot Catcher"}, "position": {"abbreviation": "C"}, "allPositions": [{"abbreviation": "C"}], "batSide": {"code": "R"}, "pitchHand": {"code": "R"}, "battingOrder": "100", "stats": {"batting": {}}},
+        "ID2002": {"person": {"id": 2002, "fullName": "Pilot First"}, "position": {"abbreviation": "1B"}, "allPositions": [{"abbreviation": "1B"}], "batSide": {"code": "L"}, "pitchHand": {"code": "R"}, "battingOrder": "200", "stats": {"batting": {}}},
+        "ID2003": {"person": {"id": 2003, "fullName": "Pilot Second"}, "position": {"abbreviation": "2B"}, "allPositions": [{"abbreviation": "2B"}], "batSide": {"code": "R"}, "pitchHand": {"code": "R"}, "battingOrder": "300", "stats": {"batting": {}}},
+        "ID2004": {"person": {"id": 2004, "fullName": "Pilot Third"}, "position": {"abbreviation": "3B"}, "allPositions": [{"abbreviation": "3B"}], "batSide": {"code": "R"}, "pitchHand": {"code": "R"}, "battingOrder": "400", "stats": {"batting": {}}},
+        "ID2005": {"person": {"id": 2005, "fullName": "Pilot Short"}, "position": {"abbreviation": "SS"}, "allPositions": [{"abbreviation": "SS"}], "batSide": {"code": "S"}, "pitchHand": {"code": "R"}, "battingOrder": "500", "stats": {"batting": {}}},
+        "ID2006": {"person": {"id": 2006, "fullName": "Pilot Left"}, "position": {"abbreviation": "LF"}, "allPositions": [{"abbreviation": "LF"}], "batSide": {"code": "L"}, "pitchHand": {"code": "R"}, "battingOrder": "600", "stats": {"batting": {}}},
+        "ID2007": {"person": {"id": 2007, "fullName": "Pilot Center"}, "position": {"abbreviation": "CF"}, "allPositions": [{"abbreviation": "CF"}], "batSide": {"code": "R"}, "pitchHand": {"code": "R"}, "battingOrder": "700", "stats": {"batting": {}}},
+        "ID2008": {"person": {"id": 2008, "fullName": "Pilot Right"}, "position": {"abbreviation": "RF"}, "allPositions": [{"abbreviation": "RF"}], "batSide": {"code": "R"}, "pitchHand": {"code": "R"}, "battingOrder": "800", "stats": {"batting": {}}},
+        "ID2009": {"person": {"id": 2009, "fullName": "Pilot Designated"}, "position": {"abbreviation": "DH"}, "allPositions": [{"abbreviation": "DH"}], "batSide": {"code": "L"}, "pitchHand": {"code": "R"}, "battingOrder": "900", "stats": {"batting": {}}},
+        "ID2010": {"person": {"id": 2010, "fullName": "Pilot Substitute"}, "position": {"abbreviation": "3B"}, "allPositions": [{"abbreviation": "3B"}], "batSide": {"code": "R"}, "pitchHand": {"code": "R"}, "battingOrder": "401", "stats": {"batting": {}}},
+        "ID2011": {"person": {"id": 2011, "fullName": "Pilot Reserve"}, "position": {"abbreviation": "OF"}, "allPositions": [], "batSide": {"code": "L"}, "pitchHand": {"code": "R"}, "stats": {"batting": {}}},
+        "ID2090": {"person": {"id": 2090, "fullName": "Pilot Starter"}, "position": {"abbreviation": "P"}, "allPositions": [{"abbreviation": "P"}], "batSide": {"code": "R"}, "pitchHand": {"code": "R"}, "stats": {"pitching": {"gamesStarted": 1, "inningsPitched": "7.0"}}},
+        "ID2091": {"person": {"id": 2091, "fullName": "Pilot Used Reliever"}, "position": {"abbreviation": "P"}, "allPositions": [{"abbreviation": "P"}], "batSide": {"code": "L"}, "pitchHand": {"code": "L"}, "stats": {"pitching": {"inningsPitched": "1.0"}}},
+        "ID2092": {"person": {"id": 2092, "fullName": "Pilot Fresh Reliever"}, "position": {"abbreviation": "P"}, "allPositions": [], "batSide": {"code": "R"}, "pitchHand": {"code": "R"}, "stats": {"pitching": {}}}
+      }
+    }
+  }
+}

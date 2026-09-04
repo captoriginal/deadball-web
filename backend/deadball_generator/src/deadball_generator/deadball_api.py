@@ -57,6 +57,7 @@ def convert_game(
     allow_network: bool = True,
     trait_mode: str = "standard",
     refresh: bool = False,
+    include_reserves: bool = True,
 ) -> Dict[str, Any]:
     """
     Convert raw game stats into Deadball stats and a game artifact using the embedded generator.
@@ -94,6 +95,7 @@ def convert_game(
             no_fetch=not allow_network,
             refresh=refresh,
             trait_mode=trait_mode,
+            include_reserves=include_reserves,
         )
     if not isinstance(df, pd.DataFrame) or df.empty:
         raise ValueError(f"Deadball generator returned no rows for game {game_id}")
@@ -104,7 +106,8 @@ def convert_game(
         "players": records, "teams": team_labels,
         "meta": {"rules_version": rules.RULES_VERSION, "trait_mode": trait_mode,
                  "rating_basis": "regular-season/career", "snapshot_at": snapshot,
-                 "stale": not cache_policy.is_fresh(int(game_date[:4]), snapshot)},
+                 "stale": not cache_policy.is_fresh(int(game_date[:4]), snapshot),
+                 "roster_scope": "available" if include_reserves else "participants"},
     })
     game_csv = df.to_csv(index=False)
     return {"stats": stats_json, "game_text": game_csv}

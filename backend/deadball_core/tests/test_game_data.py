@@ -191,6 +191,24 @@ def test_legacy_adapter_requires_explicit_present_starter():
         adapt_generator_game({"players": rows}, context)
 
 
+def test_non_dh_contract_requires_batting_ratings_for_every_pitcher():
+    data = canonical_game()
+    data["rules"]["designated_hitter"] = False
+    for side in ("away", "home"):
+        team = data["teams"][side]
+        team["lineup"][8] = {
+            "slot": 9,
+            "player_id": f"{side}-sp",
+            "position": "P",
+        }
+        for player in team["roster"]:
+            if player["role"] == "starter":
+                player.update({"bats": "R", "bt": 10, "obt": 15})
+
+    with pytest.raises(GameDataError, match="non-DH pitcher away-rp"):
+        load_generated_game(data)
+
+
 def generator_rows(team: str, base: int) -> list[dict]:
     rows = []
     for slot, position in enumerate(POSITIONS, start=1):

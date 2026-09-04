@@ -10,7 +10,7 @@ The intended minimal setup is:
 
 ## Project Status
 
-Current status: **Version 1 generator integration, solo-manager pitching, and MLB-derived playtest complete**
+Current status: **Version 1 integration and generator roster hardening complete**
 
 ## Repository Strategy
 
@@ -180,6 +180,7 @@ Core project documents:
 - [`phase-13-review.md`](phase-13-review.md) — keyboard-first gameplay, scorekeeping pauses, inspection, roster moves, and saves
 - [`phase-14-review.md`](phase-14-review.md) — deterministic complete games, integration coverage, and playtest findings
 - [`version-1-integration-review.md`](version-1-integration-review.md) — generator handoff, complete solo-manager control, and MLB-derived release playtest
+- [`generator-hardening-review.md`](generator-hardening-review.md) — full MLB boxscore rosters, non-DH pitcher batting data, and sanitized offline fixtures
 - [`generator-backlog.md`](generator-backlog.md) — deferred generator and contract-integration work
 
 ## Guiding Principles
