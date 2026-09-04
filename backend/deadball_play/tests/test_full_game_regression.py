@@ -22,6 +22,7 @@ from deadball_core import (
     resolve_swing,
 )
 from deadball_play import GameSession, Narrator, SessionConfig, TerminalApp
+from deadball_play.layout import DashboardView
 
 
 CORE_TESTS = Path(__file__).parents[2] / "deadball_core" / "tests"
@@ -260,6 +261,29 @@ def test_complete_terminal_playthrough_pauses_once_per_play():
     assert len(session.history) == 74
     assert text.count("Press Enter when scored.") == 74
     assert max(map(len, text.splitlines())) <= 90
+
+
+def test_three_column_dashboard_renders_every_state_of_a_complete_game():
+    session = new_session(1)
+    app = TerminalApp(session, narrator=Narrator(random.Random(15)))
+    field = DashboardView()
+    narration = DashboardView(context_mode="narration")
+    rendered = 0
+
+    while not session.state.is_final:
+        ready = app.dashboard_screen(field, width=150, height=34)
+        assert len(ready.splitlines()) == 34
+        session.perform(resolve_swing)
+        pending = app.dashboard_screen(narration, width=150, height=34)
+        assert "Press Enter when scored." in pending
+        assert "NARRATION" in pending
+        session.confirm_scorekeeping()
+        rendered += 2
+
+    final = app.dashboard_screen(field, width=150, height=34)
+    assert "FINAL" in final
+    assert "Game complete. Press Q to exit." in final
+    assert rendered == 148
 
 
 def test_daring_managers_complete_game_without_human_strategy_input():

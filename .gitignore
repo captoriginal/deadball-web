@@ -3,6 +3,7 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+*.egg-info/
 
 # Node / frontend
 node_modules/
@@ -16,6 +17,7 @@ target/
 backend/.env
 deadball_dev.db
 *.db
+saves/
 backend/deadball_generator/assets/Deadball Masters of the Game.pdf
 backend/.venv/
 

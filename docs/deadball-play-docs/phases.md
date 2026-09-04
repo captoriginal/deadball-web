@@ -779,6 +779,39 @@ Several complete games can be played comfortably and deterministic regression ga
 
 ---
 
+# Phase 15 — Three-Column Laptop TUI
+
+## Goal
+
+Replace the linear terminal stream with a stable, keyboard-first laptop layout
+without changing rules, game state, or session semantics.
+
+## Implement
+
+- Column 1 for current state, resolution details, scoring guidance, and prompts
+- Column 2 for a vertical list of current legal actions and global commands
+- Column 3 toggled between:
+  - a field diagram with active defenders and named runners
+  - a complete, vertically scrollable narration log
+- `Tab` to toggle the third-column mode
+- arrow-key and Page Up/Page Down narration scrolling
+- automatic narration follow unless the user has scrolled away from the bottom
+- persistent access to all three columns during scorekeeping confirmation
+- pure layout/rendering tests at representative laptop terminal sizes
+- controller tests proving navigation keys never advance game mechanics
+
+## Rulebook Use
+
+None. This is presentation work and must consume existing core/session APIs.
+
+## Done When
+
+A player can complete a game in the three-column layout, browse narration while
+a decision is pending, toggle back to the live field, and use every existing
+action without a rules or save-format regression.
+
+---
+
 # Version 1 Release Gate
 
 Version 1 should not be considered complete until:

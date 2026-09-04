@@ -34,6 +34,13 @@ from deadball_core import (
 
 from .narration import NarrationResult, Narrator
 from .demo import load_demo_game
+from .layout import (
+    DashboardView,
+    column_widths,
+    compose_columns,
+    field_panel,
+    narration_panel,
+)
 from .session import GameSession, HistoryEntry, SessionConfig, SessionError
 from .web_cache import load_cached_game
 
@@ -538,6 +545,125 @@ class TerminalApp:
         self._narrations[entry.sequence] = result
         return result
 
+    def dashboard_screen(
+        self,
+        view: DashboardView,
+        *,
+        width: int,
+        height: int,
+    ) -> str:
+        """Render the full-screen three-column laptop dashboard."""
+        _, _, right_width = column_widths(width)
+        left = self._dashboard_state_lines()
+        middle = self._dashboard_option_lines(view)
+        if view.context_mode == "field":
+            right = field_panel(self.session.state, right_width)
+        else:
+            right, maximum = narration_panel(
+                self._narration_log(),
+                width=right_width,
+                height=height - 2,
+                offset=view.narration_offset,
+            )
+            view.narration_offset = min(view.narration_offset, maximum)
+        return compose_columns(
+            left,
+            middle,
+            right,
+            width=width,
+            height=height,
+        )
+
+    def _dashboard_state_lines(self) -> list[str]:
+        state = self.session.state
+        away = state.source.teams.away
+        home = state.source.teams.home
+        status = (
+            "FINAL"
+            if state.is_final
+            else f"{state.half.upper()} {_ordinal(state.inning)}"
+        )
+        lines = [
+            "CURRENT STATE",
+            "",
+            f"{away.short_name} {state.away_score}   {status}   "
+            f"{home.short_name} {state.home_score}",
+            f"Outs: {state.outs}",
+            f"Runners: {_bases_text(state)}",
+        ]
+        if not state.is_final:
+            offense_state, offense_data = _team(state, _offense_side(state))
+            defense_state, defense_data = _team(state, _defense_side(state))
+            batter = offense_data.player(
+                offense_state.lineup[offense_state.batting_order_index]
+            )
+            pitcher = defense_data.player(defense_state.active_pitcher_id or "")
+            position = _active_position(
+                offense_state, batter.player_id, batter.positions
+            )
+            lines.extend(
+                (
+                    "",
+                    "BATTER",
+                    f"{batter.name} - {position} - {batter.bats}",
+                    f"BT {batter.bt}   OBT {batter.obt}{_traits(batter.traits)}",
+                    "",
+                    "PITCHER",
+                    f"{pitcher.name} - {pitcher.throws}HP",
+                    f"Pitch Die {defense_state.active_pitch_die}"
+                    f"{_traits(pitcher.traits)}",
+                )
+            )
+        if self._notice:
+            lines.extend(("", "NOTICE", self._notice))
+        if self.session.pending_event is not None:
+            entry = self.session.history[-1]
+            narration = self._narration_for(len(self.session.history) - 1)
+            lines.extend(("", "PLAY", render_dice(entry), narration.play_text))
+            if narration.transition_text:
+                lines.append(narration.transition_text)
+            if narration.scoring_guidance:
+                lines.extend(("", "SCORE IT", *narration.scoring_guidance))
+            lines.extend(("", "Press Enter when scored."))
+        elif state.is_final:
+            lines.extend(("", "Game complete. Press Q to exit."))
+        elif self._offense_is_computer():
+            lines.extend(("", "Computer manager is deciding..."))
+        else:
+            lines.extend(("", "What do you want to do?"))
+        return lines
+
+    def _dashboard_option_lines(self, view: DashboardView) -> list[str]:
+        if self.session.pending_event is not None:
+            options = [
+                "[Enter] Scored",
+                "[?] Rule",
+                "[Y] Detailed history",
+                "[U] Undo",
+                "[K] Save",
+                "[Q] Save & quit",
+            ]
+        elif self.session.state.is_final:
+            options = ["[Y] Detailed history", "[K] Save", "[Q] Exit"]
+        else:
+            options = _command_options(self.session.state, self.session)
+        options.extend(("", "[Tab] Toggle field/log"))
+        if view.context_mode == "narration":
+            options.extend(("[Up/Down] Scroll", "[PgUp/PgDn] Page"))
+        return ["CURRENT OPTIONS", "", *options]
+
+    def _narration_log(self) -> list[str]:
+        if not self.session.history:
+            return ["No plays yet."]
+        lines = []
+        for index, entry in enumerate(self.session.history):
+            marker = "" if entry.scorekeeping_confirmed else " [scorecard pending]"
+            lines.append(
+                f"{entry.sequence}. {_half_label(entry.state_before)}: "
+                f"{self._narration_for(index).play_text}{marker}"
+            )
+        return lines
+
     def _show(self, text: str) -> None:
         if self.clear_screen:
             self.output.write("\033[2J\033[H")
@@ -703,6 +829,16 @@ def render_bullpen(state: GameState, side: str) -> str:
 
 
 def _command_menu(state: GameState, session: GameSession | None) -> str:
+    commands = _command_options(state, session)
+    return "\n".join(
+        "  ".join(commands[index:index + 3])
+        for index in range(0, len(commands), 3)
+    )
+
+
+def _command_options(
+    state: GameState, session: GameSession | None
+) -> list[str]:
     actions = set(legal_actions(state))
     commands = []
     for key, action in (
@@ -740,10 +876,7 @@ def _command_menu(state: GameState, session: GameSession | None) -> str:
             "[Q] Save & quit",
         )
     )
-    return "\n".join(
-        "  ".join(commands[index:index + 3])
-        for index in range(0, len(commands), 3)
-    )
+    return commands
 
 
 def _resolve_action(
@@ -864,7 +997,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--away-daring", type=int)
     parser.add_argument("--home-daring", type=int)
     parser.add_argument(
-        "--no-clear", action="store_true", help="do not clear between screens"
+        "--line-mode",
+        action="store_true",
+        help="use the scrolling compatibility interface instead of three columns",
+    )
+    parser.add_argument(
+        "--no-clear",
+        action="store_true",
+        help="deprecated alias for --line-mode",
     )
     return parser
 
@@ -915,10 +1055,17 @@ def main(argv: list[str] | None = None) -> int:
                 session.save()
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
-    return TerminalApp(
-        session,
-        clear_screen=sys.stdout.isatty() and not args.no_clear,
-    ).run()
+    use_fullscreen = (
+        sys.stdin.isatty()
+        and sys.stdout.isatty()
+        and not args.line_mode
+        and not args.no_clear
+    )
+    if use_fullscreen:
+        from .fullscreen import run_fullscreen
+
+        return run_fullscreen(session)
+    return TerminalApp(session, clear_screen=False).run()
 
 
 if __name__ == "__main__":

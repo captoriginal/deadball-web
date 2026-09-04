@@ -16,9 +16,11 @@ The program handles dice, rule lookups, tables, game state, and opponent decisio
 
 ## Design Principles
 
-### Keep the Main Screen Sparse
+### Use the Laptop Screen Deliberately
 
-The main screen should emphasize only what is needed for the current baseball situation.
+The primary target is a laptop terminal with enough width for three persistent
+columns. The main screen should emphasize only what is needed for the current
+baseball situation while using that width to keep choices and context visible.
 
 Normally visible:
 
@@ -86,32 +88,54 @@ This pause is part of the design, not an inconvenience.
 
 ## Main Game Screen
 
+### Three-Column Laptop Layout
+
+The normal play screen is a three-column layout:
+
+| Column | Purpose | Contents |
+| --- | --- | --- |
+| 1 | State and questions | score, inning, outs, batter, pitcher, ratings, dice/result details, scoring guidance, and the active question or confirmation |
+| 2 | Current options | a vertical, keyboard-labeled list containing only the actions currently legal or relevant, such as Swing, Steal, Bunt, Hit & Run, substitutions, inspection, Undo, and Save/Quit |
+| 3 | Toggleable context | either the field diagram with runners and active players or the complete running narration log |
+
+Column 2 must remain vertical rather than wrapping actions across rows. Column 1
+owns every prompt; questions should not jump between columns. The scorekeeping
+pause also appears in Column 1 while Columns 2 and 3 remain useful.
+
+Column 3 has two modes:
+
+- **Field** uses most of the available column height for an expanded diamond.
+  It names all nine active defenders at their positions and gives each base a
+  separate line naming its runner or marking it empty.
+- **Narration** shows the complete play-by-play for the current game as a
+  vertically scrollable log. New plays follow the bottom automatically unless
+  the user has scrolled upward.
+
+`Tab` should toggle the third column between Field and Narration. In Narration
+mode, arrow keys and Page Up/Page Down should scroll without advancing the
+game. The selected mode and narration scroll position are presentation state;
+they do not belong in the rules engine or saved mechanical game state.
+
+For the initial implementation, assume at least a typical laptop-width terminal
+and optimize for clear stable columns rather than building a narrow/mobile
+layout. Column widths may adapt within that roomy target, but the interface
+should not collapse the three responsibilities into one stream.
+
 A representative layout:
 
 ```text
-------------------------------------------------------------
-LAD  2                      TOP 5TH                    SF  1
-
-Outs: 1                     Runner on 1st
-
-Freddie Freeman — 1B — L
-BT 30   OBT 39   P+
-
-Logan Webb — RHP
-Pitch Die: d8
-
-Recent plays
-4th  Ohtani doubled to RF
-4th  Betts grounded 6-3
-4th  Freeman singled, Ohtani scored
-
-[S] Swing
-[T] Steal second
-[B] Bunt
-[H] Hit & Run
-[P] Pinch Hit
-[R] Pinch Run
-------------------------------------------------------------
++--------------------------------+------------------+--------------------------------------+
+| LAD 2   TOP 5TH   SF 1         | CURRENT OPTIONS  | FIELD                          [Tab] |
+| Outs: 1                        |                  |                 CF                   |
+|                                | [S] Swing        |          LF            RF            |
+| Freddie Freeman - 1B - L       | [T] Steal second |             SS    2B                 |
+| BT 30  OBT 39  P+              | [B] Bunt         |          3B    runner    1B           |
+|                                | [H] Hit & Run    |                  P                   |
+| Logan Webb - RHP               | [P] Pinch Hit    |                  C                   |
+| Pitch Die: d8                  | [R] Pinch Run    |                                      |
+|                                |                  | Tab: show narration                  |
+| What do you want to do?        | [?] Rule         |                                      |
++--------------------------------+------------------+--------------------------------------+
 ```
 
 The exact visual design may change, but the information hierarchy should remain stable.
@@ -159,7 +183,9 @@ The TUI may use either:
 - an ASCII diamond
 - a compact symbolic diamond
 
-Whichever format is chosen should remain readable in a narrow terminal.
+The laptop layout should use the field-diagram form in Column 3. It should label
+active defenders and occupied bases with player names where space permits.
+Clarity and stable alignment are more important than decorative graphics.
 
 Example:
 
@@ -170,13 +196,8 @@ Example:
       HP
 ```
 
-or simply:
-
-```text
-Runners: 1B, 3B
-```
-
-Clarity is more important than visual novelty.
+Column 1 should also retain a concise textual runner summary so the current
+state does not depend solely on interpreting the diagram.
 
 ---
 
@@ -428,9 +449,11 @@ Avoid excessive internal AI-style explanation.
 
 ---
 
-## Recent Play History
+## Narration History
 
-The main game screen should retain a small recent-play window.
+Column 3's Narration mode is the primary in-game history view. It contains the
+entire game rather than only the most recent plays and remains scrollable while
+a decision or scorekeeping confirmation is pending.
 
 Example:
 
@@ -442,7 +465,8 @@ Recent plays
 4th  Freeman singled, Ohtani scored
 ```
 
-A separate history view may show the entire game.
+The existing full history inspection command may remain as a detailed view, but
+ordinary narration browsing should not replace or interrupt the main screen.
 
 ---
 

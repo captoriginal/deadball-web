@@ -20,6 +20,23 @@ and `python -m deadball_play`. It displays the live game situation, derives
 tactical choices from the core, guides roster moves, shows dice and rule traces,
 pauses for paper scorekeeping, and exposes history, Undo, autosave, and resume.
 
+Phase 15 uses a full-screen, three-column laptop layout when standard input and
+output are attached to a terminal:
+
+1. current state, results, scoring guidance, and questions;
+2. current legal options in a vertical list;
+3. a field diagram or scrollable complete narration log.
+
+Press `Tab` to toggle the third column. In narration mode, use Up/Down or Page
+Up/Page Down to scroll; `Home` moves to the oldest available text and `End`
+returns to the live bottom. These navigation keys never advance the game.
+
+Install all repository Python packages into the root virtual environment:
+
+```console
+./scripts/install-deadball-play
+```
+
 Try a built-in fictional game immediately:
 
 ```console
@@ -48,6 +65,9 @@ Resume it later:
 ```console
 ./scripts/deadball-play --resume saves/current-game.json
 ```
+
+Redirected input automatically uses the scrolling compatibility interface. To
+use it interactively, pass `--line-mode`.
 
 Phase 14 adds deterministic full-game regression baselines for regulation,
 heavy offense, extra innings, walk-offs, tactics, fatigue, multiple relievers,

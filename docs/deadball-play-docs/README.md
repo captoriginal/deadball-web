@@ -10,7 +10,7 @@ The intended minimal setup is:
 
 ## Project Status
 
-Current status: **Version 1 integration and generator roster hardening complete**
+Current status: **Version 1 acceptance, installation, and three-column TUI complete**
 
 ## Repository Strategy
 
@@ -181,6 +181,8 @@ Core project documents:
 - [`phase-14-review.md`](phase-14-review.md) — deterministic complete games, integration coverage, and playtest findings
 - [`version-1-integration-review.md`](version-1-integration-review.md) — generator handoff, complete solo-manager control, and MLB-derived release playtest
 - [`generator-hardening-review.md`](generator-hardening-review.md) — full MLB boxscore rosters, non-DH pitcher batting data, and sanitized offline fixtures
+- [`phase-15-review.md`](phase-15-review.md) — laptop-oriented three-column terminal interface and navigation
+- [`version-1-acceptance.md`](version-1-acceptance.md) — release acceptance evidence and known legacy test exclusions
 - [`generator-backlog.md`](generator-backlog.md) — deferred generator and contract-integration work
 
 ## Guiding Principles
@@ -224,8 +226,23 @@ These should build on the same rules engine rather than changing the core archit
 
 ## Installation
 
-Not yet available.
+From the repository root:
+
+```console
+./scripts/install-deadball-play
+```
+
+The installer creates or reuses `.venv`, installs the three local Python
+packages, and verifies the installed command.
 
 ## Running
 
-Not yet available.
+Start the bundled demonstration game:
+
+```console
+./scripts/deadball-play --demo --save saves/demo-game.json
+```
+
+An interactive terminal uses the three-column interface automatically. Add
+`--line-mode` for redirected input, accessibility tooling, or a compact
+compatibility interface.

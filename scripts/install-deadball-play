@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VENV_PATH="$PROJECT_ROOT/.venv"
+
+if [ ! -x "$VENV_PATH/bin/python" ]; then
+  if command -v python3.12 >/dev/null 2>&1; then
+    PYTHON_COMMAND="python3.12"
+  elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_COMMAND="python3"
+  else
+    echo "Python 3.10 or newer is required." >&2
+    exit 1
+  fi
+  "$PYTHON_COMMAND" -m venv "$VENV_PATH"
+fi
+
+if ! "$VENV_PATH/bin/python" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'; then
+  echo "Python 3.10 or newer is required." >&2
+  exit 1
+fi
+
+cd "$PROJECT_ROOT"
+"$VENV_PATH/bin/python" -m pip install -r backend/requirements.txt
+"$VENV_PATH/bin/deadball-play" --help >/dev/null
+
+echo "Deadball Play is installed."
+echo "Start a demo: ./scripts/deadball-play --demo --save saves/demo-game.json"

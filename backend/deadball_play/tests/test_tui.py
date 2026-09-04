@@ -21,6 +21,13 @@ from deadball_play import (
     load_cached_game,
     load_demo_game,
 )
+from deadball_play.fullscreen import FullscreenApp
+from deadball_play.layout import (
+    DashboardView,
+    column_widths,
+    field_panel,
+    narration_panel,
+)
 from deadball_play.tui import (
     TerminalApp,
     render_bullpen,
@@ -94,6 +101,101 @@ def test_runner_state_adds_only_tactics_returned_by_core():
     assert "[T] Steal" in screen
     assert "[R] Pinch run" in screen
     assert "1B Visitors Hitter 2" in screen
+
+
+def test_three_column_dashboard_separates_state_vertical_options_and_field():
+    state = replace(initial_state(), bases=("away-h2", None, None))
+    session = GameSession(state)
+    app = TerminalApp(session)
+    view = DashboardView()
+
+    screen = app.dashboard_screen(view, width=160, height=32)
+    lines = screen.splitlines()
+    left_width, middle_width, _ = column_widths(160)
+    first_separator = left_width + 1
+    second_separator = first_separator + middle_width + 1
+
+    assert len(lines) == 32
+    assert all(len(line) == 160 for line in lines)
+    assert "CURRENT STATE" in screen[:first_separator * 32]
+    assert any(
+        first_separator < line.index("[S] Swing") < second_separator
+        for line in lines
+        if "[S] Swing" in line
+    )
+    option_rows = {
+        next(index for index, line in enumerate(lines) if option in line)
+        for option in ("[S] Swing", "[B] Bunt", "[H] Hit & Run", "[T] Steal")
+    }
+    assert len(option_rows) == 4
+    assert "FIELD" in screen
+    assert "DEFENSE: Hosts" in screen
+    assert all(f"Hosts Hitter {slot}" in screen for slot in range(1, 9))
+    assert "Hosts Starter" in screen
+    assert "[1B BASE]" in screen
+    assert "Runner: Visitors Hitter 2" in screen
+
+
+def test_expanded_field_keeps_every_position_and_runner_at_minimum_width():
+    state = replace(
+        initial_state(),
+        bases=("away-h2", "away-h3", "away-h4"),
+    )
+    _, _, right_width = column_widths(120)
+
+    field = field_panel(state, right_width)
+    rendered = "\n".join(field)
+
+    assert len(field) == 21
+    assert all(
+        position in rendered
+        for position in (
+            "[LF]",
+            "[CF]",
+            "[RF]",
+            "[SS]",
+            "[2B]",
+            "[3B]",
+            "[P]",
+            "[1B]",
+            "[C]",
+        )
+    )
+    assert all(f"Visitors Hitter {slot}" in rendered for slot in (2, 3, 4))
+
+
+def test_narration_column_toggles_scrolls_and_never_changes_game_state():
+    session = GameSession(initial_state())
+    before = session.state
+    fake_screen = type("Screen", (), {"getmaxyx": lambda self: (32, 160)})()
+    controller = FullscreenApp(session, fake_screen)
+
+    assert controller._handle_view_key("\t") is True
+    assert controller.view.context_mode == "narration"
+    import curses
+
+    assert controller._handle_view_key(curses.KEY_UP) is True
+    assert controller.view.narration_offset == 1
+    assert controller._handle_view_key(curses.KEY_NPAGE) is True
+    assert controller.view.narration_offset == 0
+    assert session.state == before
+    assert session.history == ()
+
+
+def test_narration_viewport_follows_bottom_until_user_scrolls():
+    narration = [f"Play {index}" for index in range(20)]
+
+    latest, maximum = narration_panel(
+        narration, width=40, height=8, offset=0
+    )
+    older, _ = narration_panel(
+        narration, width=40, height=8, offset=5
+    )
+
+    assert maximum > 0
+    assert any("Play 19" in line for line in latest)
+    assert not any("Play 19" in line for line in older)
+    assert older[2].startswith("[scrolled up")
 
 
 def test_pending_play_shows_dice_narration_scoring_and_pause():
