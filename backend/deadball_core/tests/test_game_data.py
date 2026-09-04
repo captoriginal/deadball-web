@@ -8,6 +8,7 @@ from deadball_core.game_data import (
     GameDataError,
     GeneratorGameContext,
     adapt_generator_game,
+    build_generator_game,
     load_generated_game,
 )
 from deadball_core.state import initialize_game
@@ -147,6 +148,31 @@ def test_legacy_generator_payload_adapts_to_contract_and_state():
     assert game.teams.away.player("mlb-101").traits == ("P-",)
     assert state.away.bench == ("mlb-110",)
     assert state.away.bullpen == ("mlb-198",)
+
+
+def test_web_generator_metadata_builds_contract_and_accepts_role_starter():
+    rows = [*generator_rows("Visitors", 100), *generator_rows("Hosts", 200)]
+    for row in rows:
+        if row.get("GameStarted"):
+            row.pop("GameStarted")
+            row["Role"] = "starter"
+    game = build_generator_game(
+        {
+            "players": rows,
+            "teams": {"away_abbr": "VIS", "home_abbr": "HST"},
+        },
+        game_id="123",
+        game_date="2026-08-15",
+        away_team="Visitors",
+        home_team="Hosts",
+        away_short="Visitors",
+        home_short="Hosts",
+    )
+
+    assert game.game.game_id == "mlb-123"
+    assert game.teams.away.short_name == "VIS"
+    assert game.teams.home.short_name == "HST"
+    assert game.teams.away.starting_pitcher_id == "mlb-199"
 
 
 def test_legacy_adapter_requires_explicit_present_starter():

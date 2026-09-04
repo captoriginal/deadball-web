@@ -937,6 +937,22 @@ export default function App() {
     return `${dateText} - ${away} @ ${home} - Deadball.${ext}`;
   }
 
+  function buildPlayFilename(game) {
+    if (!game) return "deadball-play-game.json";
+    let dateText = "game";
+    try {
+      const d = new Date(game.game_date);
+      if (!Number.isNaN(d.getTime())) {
+        dateText = d.toISOString().split("T")[0];
+      }
+    } catch (err) {
+      dateText = "game";
+    }
+    const away = safeTeamLabel(game.away_team, "Away");
+    const home = safeTeamLabel(game.home_team, "Home");
+    return `${dateText} - ${away} @ ${home} - Deadball Play.json`;
+  }
+
   async function openExternal(url) {
     if (!url) return;
     // In browser builds, use window.open immediately.
@@ -1043,6 +1059,64 @@ export default function App() {
       }
     } catch (err) {
       setActionStatus({ gameId, message: `Failed to download: ${errorMessage(err)}`, tone: "error" });
+    } finally {
+      setLoadingAction({ gameId: null, kind: null });
+    }
+  }
+
+  async function handleDownloadPlay(gameId) {
+    setSelectedGame(gameId);
+    setLoadingAction({ gameId, kind: "play" });
+    setActionStatus({
+      gameId,
+      message: "Preparing Deadball Play game...",
+      tone: "info",
+    });
+    try {
+      const result = await generateGame(gameId, { scrollToScorecard: false });
+      if (!result?.data) return;
+      const filename = buildPlayFilename(result.data.game);
+      const endpoint = `/api/games/${encodeURIComponent(gameId)}/play.json`;
+      if (!isTauri) {
+        const ok = await browserFetchAndDownload(
+          `${API_BASE}${endpoint}`,
+          filename,
+        );
+        if (ok) {
+          setActionStatus({ gameId, message: `Downloaded ${filename}`, tone: "info" });
+        }
+        return;
+      }
+
+      const proxied = await tauriBackendRequest(endpoint, { method: "GET" });
+      if (proxied.status < 200 || proxied.status >= 300) {
+        const text = new TextDecoder().decode(new Uint8Array(proxied.body || []));
+        throw new Error(parseBackendError(text, proxied.status));
+      }
+      const [{ invoke }, { downloadDir, join }] = await Promise.all([
+        import("@tauri-apps/api/core"),
+        import("@tauri-apps/api/path"),
+      ]);
+      const downloads = await downloadDir();
+      const filePath = await join(downloads, filename);
+      await invoke("save_scorecard_pdf", {
+        path: filePath,
+        bytes: Array.from(proxied.body || []),
+      });
+      setActionStatus({
+        gameId,
+        message: `Saved Deadball Play game to ${filePath}`,
+        tone: "info",
+      });
+      logCall(`Saved Deadball Play game to ${filePath}`);
+    } catch (err) {
+      const message = errorMessage(err);
+      setActionStatus({
+        gameId,
+        message: `Failed to export game: ${message}`,
+        tone: "error",
+      });
+      logCall(`Deadball Play export failed: ${message}`);
     } finally {
       setLoadingAction({ gameId: null, kind: null });
     }
@@ -1231,6 +1305,7 @@ export default function App() {
                   const isBusy = loadingAction.gameId === g.game_id;
                   const pdfLoading = isBusy && loadingAction.kind === "pdf";
                   const htmlLoading = isBusy && loadingAction.kind === "html";
+                  const playLoading = isBusy && loadingAction.kind === "play";
                   return (
                     <div
                       key={g.game_id}
@@ -1255,7 +1330,7 @@ export default function App() {
                         </div>
                       </div>
                       <div className="flex flex-col items-end gap-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center justify-end gap-2">
                           {debugMode && (
                             <label className="flex items-center gap-1 text-xs text-slate-600">
                               <input
@@ -1285,6 +1360,16 @@ export default function App() {
                             <span className="flex items-center gap-2">
                               {htmlLoading && <Spinner variant="dark" />}
                               <span>{htmlLoading ? "Generating..." : "Download HTML"}</span>
+                            </span>
+                          </button>
+                          <button
+                            onClick={() => handleDownloadPlay(g.game_id)}
+                            disabled={isBusy}
+                            className="rounded border border-emerald-600 px-3 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <span className="flex items-center gap-2">
+                              {playLoading && <Spinner variant="dark" />}
+                              <span>{playLoading ? "Preparing..." : "Download Play JSON"}</span>
                             </span>
                           </button>
                         </div>

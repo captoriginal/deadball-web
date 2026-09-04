@@ -18,7 +18,10 @@ from .events import (
     StealDiceRecord,
     StealEvent,
 )
+from .game_flow import finish_action_state
+from .pitching import apply_pitcher_progress
 from .state import GameState
+from .substitutions import effective_defensive_traits
 
 
 PITCH_DIE_LADDER = ("-d20", "-d12", "-d8", "-d4", "d4", "d8", "d12", "d20")
@@ -79,6 +82,11 @@ HIT_LEVELS = ("single", "double", "triple", "home_run")
 
 def legal_actions(state: GameState) -> tuple[str, ...]:
     """Return swing and the steals legal from the current base state."""
+    if state.is_final:
+        return ()
+    defense = state.home if state.half == "top" else state.away
+    if defense.active_pitcher_id is None or defense.active_pitch_die is None:
+        return ()
     actions = ["swing"]
     first, second, third = state.bases
     if any(runner is not None for runner in state.bases):
@@ -103,7 +111,7 @@ def resolve_bunt(state: GameState, dice: DiceSource) -> ActionResult:
     offense, defense, offense_data, defense_data = _active_sides(state)
     batter_id = offense.lineup[offense.batting_order_index]
     batter = offense_data.player(batter_id)
-    pitcher = defense_data.player(defense.active_pitcher_id)
+    pitcher = _active_pitcher(defense, defense_data)
     roll = dice.roll(6)
     modifier = 1 if "C+" in batter.traits else -1 if "C-" in batter.traits else 0
     modified = roll + modifier
@@ -128,10 +136,9 @@ def resolve_bunt(state: GameState, dice: DiceSource) -> ActionResult:
             runner_moves=moves,
         )
     elif modified >= 6 and "S+" in batter.traits:
-        defender = _defender(state, "3B")
         defense_roll = dice.roll(12)
         defense_outcome, modified_defense_roll = resolve_defense_roll(
-            defense_roll, defender.traits
+            defense_roll, effective_defensive_traits(state, "3B")
         )
         trace.append(RuleTraceEntry(
             "defense",
@@ -190,7 +197,9 @@ def resolve_bunt(state: GameState, dice: DiceSource) -> ActionResult:
     record = BuntDiceRecord(
         roll, modifier, modified, defense_roll, modified_defense_roll
     )
-    return ActionResult(event, new_state, record, tuple(trace))
+    return _finalize_action(
+        state, ActionResult(event, new_state, record, tuple(trace))
+    )
 
 
 def resolve_hit_and_run(state: GameState, dice: DiceSource) -> ActionResult:
@@ -202,7 +211,7 @@ def resolve_hit_and_run(state: GameState, dice: DiceSource) -> ActionResult:
     assert runner_id is not None
     batter_id = offense.lineup[offense.batting_order_index]
     batter = offense_data.player(batter_id)
-    pitcher = defense_data.player(defense.active_pitcher_id)
+    pitcher = _active_pitcher(defense, defense_data)
     if batter.bt is None or batter.obt is None or batter.bats is None:
         raise RulesError("current batter lacks required ratings or handedness")
     if pitcher.throws is None:
@@ -235,6 +244,7 @@ def resolve_hit_and_run(state: GameState, dice: DiceSource) -> ActionResult:
     fielded_by = None
     defense_outcome = None
     defense_trace = None
+    out_type = None
 
     if mss <= adjusted_bt:
         batting_result = "hit"
@@ -242,14 +252,15 @@ def resolve_hit_and_run(state: GameState, dice: DiceSource) -> ActionResult:
         batting_result = "walk"
     else:
         out = out_table_result(mss)
+        out_type = out.event_type
         fielded_by = out.fielded_by
         if mss <= adjusted_obt + 5:
             location = out_table_result(mss, possible_error=True)
+            out_type = location.event_type
             fielded_by = location.fielded_by
-            defender = _defender(state, fielded_by or "")
             defense_roll = dice.roll(12)
             defense_outcome, modified_defense_roll = resolve_defense_roll(
-                defense_roll, defender.traits
+                defense_roll, effective_defensive_traits(state, fielded_by or "")
             )
             swing_record = replace(
                 swing_record,
@@ -319,6 +330,7 @@ def resolve_hit_and_run(state: GameState, dice: DiceSource) -> ActionResult:
         fielded_by=fielded_by,
         defense_outcome=defense_outcome,
         runner_moves=moves,
+        out_type=out_type,
     )
     trace = [
         RuleTraceEntry(
@@ -337,13 +349,16 @@ def resolve_hit_and_run(state: GameState, dice: DiceSource) -> ActionResult:
     ]
     if defense_trace is not None:
         trace.append(defense_trace)
-    return ActionResult(
-        event,
-        new_state,
-        HitAndRunDiceRecord(
-            steal_record, swing_record, target_bonus, adjusted_bt, adjusted_obt
+    return _finalize_action(
+        state,
+        ActionResult(
+            event,
+            new_state,
+            HitAndRunDiceRecord(
+                steal_record, swing_record, target_bonus, adjusted_bt, adjusted_obt
+            ),
+            tuple(trace),
         ),
-        tuple(trace),
     )
 
 
@@ -394,15 +409,18 @@ def resolve_steal(state: GameState, action: str, dice: DiceSource) -> ActionResu
                 "Second Edition p. 31",
             ),
         )
-        return ActionResult(
-            StealEvent(
-                event_type, action, True, moves,
-                outs_added=outs_added,
-                scoring_notation="SB" if outs_added == 0 else "CS",
+        return _finalize_action(
+            state,
+            ActionResult(
+                StealEvent(
+                    event_type, action, True, moves,
+                    outs_added=outs_added,
+                    scoring_notation="SB" if outs_added == 0 else "CS",
+                ),
+                new_state,
+                record,
+                trace,
             ),
-            new_state,
-            record,
-            trace,
         )
 
     origin, destination, runner_id = {
@@ -447,15 +465,18 @@ def resolve_steal(state: GameState, action: str, dice: DiceSource) -> ActionResu
             "Second Edition pp. 24, 31",
         ),
     )
-    return ActionResult(
-        StealEvent(
-            event_type, action, True, moves,
-            outs_added=outs_added, runs_scored=runs,
-            scoring_notation="SB" if safe else "CS",
+    return _finalize_action(
+        state,
+        ActionResult(
+            StealEvent(
+                event_type, action, True, moves,
+                outs_added=outs_added, runs_scored=runs,
+                scoring_notation="SB" if safe else "CS",
+            ),
+            new_state,
+            record,
+            trace,
         ),
-        new_state,
-        record,
-        trace,
     )
 
 
@@ -587,7 +608,7 @@ def resolve_swing(state: GameState, dice: DiceSource) -> ActionResult:
         raise RulesError("batting-order index is out of range")
     batter_id = offense.lineup[offense.batting_order_index]
     batter = offense_data.player(batter_id)
-    pitcher = defense_data.player(defense.active_pitcher_id)
+    pitcher = _active_pitcher(defense, defense_data)
     if batter.bt is None or batter.obt is None or batter.bats is None:
         raise RulesError("current batter lacks required ratings or handedness")
     if pitcher.throws is None:
@@ -666,10 +687,9 @@ def resolve_swing(state: GameState, dice: DiceSource) -> ActionResult:
         modified_defense_roll = None
         defense_outcome = None
         if result.defense_position:
-            defender = _defender(state, result.defense_position)
             defense_roll = dice.roll(12)
             defense_outcome, modified_defense_roll = resolve_defense_roll(
-                defense_roll, defender.traits
+                defense_roll, effective_defensive_traits(state, result.defense_position)
             )
             trace.append(RuleTraceEntry(
                 "defense",
@@ -742,10 +762,9 @@ def resolve_swing(state: GameState, dice: DiceSource) -> ActionResult:
         )
     elif classification == AtBatClassification.POSSIBLE_ERROR:
         location = out_table_result(mss, possible_error=True)
-        defender = _defender(state, location.fielded_by or "")
         defense_roll = dice.roll(12)
         defense_outcome, modified_defense_roll = resolve_defense_roll(
-            defense_roll, defender.traits
+            defense_roll, effective_defensive_traits(state, location.fielded_by or "")
         )
         record = replace(
             record, defense_roll=defense_roll,
@@ -797,7 +816,18 @@ def resolve_swing(state: GameState, dice: DiceSource) -> ActionResult:
         )
         new_state = state
 
-    return ActionResult(event, new_state, record, tuple(trace))
+    return _finalize_action(
+        state, ActionResult(event, new_state, record, tuple(trace))
+    )
+
+
+def _finalize_action(before: GameState, result: ActionResult) -> ActionResult:
+    if isinstance(result.event, PlayEvent) and not result.event.resolved:
+        return result
+    return replace(
+        result,
+        new_state=apply_pitcher_progress(before, result.new_state, result.event),
+    )
 
 
 def _parse_pitch_die(pitch_die: str) -> tuple[int, int]:
@@ -808,11 +838,19 @@ def _parse_pitch_die(pitch_die: str) -> tuple[int, int]:
 
 
 def _active_sides(state: GameState):
+    if state.is_final:
+        raise RulesError("game is final")
     if state.half == "top":
         return state.away, state.home, state.source.teams.away, state.source.teams.home
     if state.half == "bottom":
         return state.home, state.away, state.source.teams.home, state.source.teams.away
     raise RulesError(f"unknown half inning {state.half!r}")
+
+
+def _active_pitcher(defense, defense_data):
+    if defense.active_pitcher_id is None or defense.active_pitch_die is None:
+        raise RulesError("a pitcher must be installed before resolving a play")
+    return defense_data.player(defense.active_pitcher_id)
 
 
 def _defender(state: GameState, position: str):
@@ -840,7 +878,7 @@ def _speed_modifier(traits: tuple[str, ...]) -> int:
 
 
 def _catcher_steal_modifier(state: GameState) -> int:
-    traits = _defender(state, "C").traits
+    traits = effective_defensive_traits(state, "C")
     if "D+" in traits:
         return -1
     if "D-" in traits:
@@ -1040,20 +1078,12 @@ def _finish_state(
     outs_added: int,
     runs: int,
 ) -> GameState:
-    score_field = "away_score" if original.half == "top" else "home_score"
-    updated = replace(
+    return finish_action_state(
         working,
-        bases=bases,
-        outs=original.outs + outs_added,
-        **{score_field: getattr(original, score_field) + runs},
-    )
-    if updated.outs < 3:
-        return updated
-    if original.half == "top":
-        return replace(updated, half="bottom", outs=0, bases=(None, None, None))
-    return replace(
-        updated, inning=original.inning + 1, half="top", outs=0,
-        bases=(None, None, None),
+        original,
+        bases,
+        outs_added=outs_added,
+        runs=runs,
     )
 
 

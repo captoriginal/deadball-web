@@ -11,3 +11,4 @@ requests==2.31.0
 pytest==7.4.4
 pypdf
 -e ./backend/deadball_generator
+-e ./backend/deadball_core

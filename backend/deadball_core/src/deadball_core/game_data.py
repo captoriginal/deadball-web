@@ -287,6 +287,58 @@ def adapt_generator_game(
     return load_generated_game(contract)
 
 
+def build_generator_game(
+    stats: str | bytes | Mapping[str, Any],
+    *,
+    game_id: str,
+    game_date: str,
+    away_team: str,
+    home_team: str,
+    away_short: str | None = None,
+    home_short: str | None = None,
+) -> GeneratedGame:
+    """Build schema v1 using identity metadata plus a flat generator result."""
+    if isinstance(stats, (str, bytes)):
+        try:
+            payload = json.loads(stats)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise GameDataError(f"generator stats are not valid JSON: {exc}") from exc
+    else:
+        payload = stats
+    root = _mapping(payload, "generator stats")
+    teams = root.get("teams") if isinstance(root.get("teams"), Mapping) else {}
+    rows = _sequence(root.get("players"), "generator stats.players")
+    away_abbr = _optional_text(teams.get("away_abbr")) or away_short or away_team
+    home_abbr = _optional_text(teams.get("home_abbr")) or home_short or home_team
+    designated_hitter = any(
+        str(_mapping(row, "generator player").get("Type", "")).casefold()
+        == "hitter"
+        and str(_mapping(row, "generator player").get("Pos", "")).upper()
+        == "DH"
+        and (
+            (order := _batting_order(
+                _mapping(row, "generator player").get("BatOrder")
+            ))
+            is not None
+            and order.is_integer()
+            and 1 <= order <= 9
+        )
+        for row in rows
+    )
+    return adapt_generator_game(
+        root,
+        GeneratorGameContext(
+            game_id=f"mlb-{game_id}" if not game_id.startswith("mlb-") else game_id,
+            game_date=game_date,
+            away_team_name=away_team,
+            away_team_short=away_abbr,
+            home_team_name=home_team,
+            home_team_short=home_abbr,
+            designated_hitter=designated_hitter,
+        ),
+    )
+
+
 def _parse_team(value: Any, path: str) -> TeamData:
     raw = _mapping(value, path)
     roster_raw = _sequence(raw.get("roster"), f"{path}.roster")
@@ -368,8 +420,16 @@ def _adapt_team_rows(
             row.get("IDmlb") for row in team_rows
             if str(row.get("Type", "")).strip().casefold() == "pitcher" and _truthy(row.get("GameStarted"))
         ]
+        if not started:
+            started = [
+                row.get("IDmlb") for row in team_rows
+                if str(row.get("Type", "")).strip().casefold() == "pitcher"
+                and str(row.get("Role", "")).strip().casefold() == "starter"
+            ]
         if len(started) != 1:
-            raise GameDataError(f"{team_name} requires exactly one explicit GameStarted pitcher")
+            raise GameDataError(
+                f"{team_name} requires exactly one GameStarted or Role=starter pitcher"
+            )
         starting_pitcher_id = started[0]
     starter_id = _canonical_mlb_id(starting_pitcher_id, "starting pitcher ID")
     players: dict[str, dict[str, Any]] = {}

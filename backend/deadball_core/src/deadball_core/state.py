@@ -14,6 +14,35 @@ class DefensiveAssignment:
 
 
 @dataclass(frozen=True)
+class PitchDieAdjustment:
+    reason: str
+    previous_die: str
+    new_die: str
+    inning: int
+    half: str
+
+
+@dataclass(frozen=True)
+class PitcherState:
+    player_id: str
+    role: str
+    base_pitch_die: str
+    current_pitch_die: str
+    outs_recorded: int = 0
+    runs_allowed: int = 0
+    completed_innings: int = 0
+    current_inning_runs: int = 0
+    previous_inning_runs: int | None = None
+    current_inning_batters_faced: int = 0
+    current_inning_strikeouts: int = 0
+    consecutive_scoreless_innings: int = 0
+    bases_loaded_no_out_jam: bool = False
+    runs_since_jam: int = 0
+    late_run_reduction_applied: bool = False
+    adjustments: tuple[PitchDieAdjustment, ...] = ()
+
+
+@dataclass(frozen=True)
 class InitialTeamState:
     team_id: str
     lineup: tuple[str, ...]
@@ -21,9 +50,19 @@ class InitialTeamState:
     active_defense: tuple[DefensiveAssignment, ...]
     bench: tuple[str, ...]
     bullpen: tuple[str, ...]
-    active_pitcher_id: str
-    active_pitch_die: str
+    active_pitcher_id: str | None
+    active_pitch_die: str | None
+    pitcher_state: PitcherState | None
+    pitcher_lineup_slot: int | None
     removed_players: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class GameResult:
+    winner_team_id: str
+    ending: str
+    inning: int
+    half: str
 
 
 @dataclass(frozen=True)
@@ -37,6 +76,11 @@ class GameState:
     bases: tuple[str | None, str | None, str | None]
     away: InitialTeamState
     home: InitialTeamState
+    result: GameResult | None = None
+
+    @property
+    def is_final(self) -> bool:
+        return self.result is not None
 
 
 def initialize_game(game: GeneratedGame) -> GameState:
@@ -77,6 +121,8 @@ def _initialize_team(team: TeamData) -> InitialTeamState:
         player.player_id for player in team.roster
         if player.player_id != team.starting_pitcher_id and player.role in {"starter", "reliever"}
     )
+    starter = team.player(team.starting_pitcher_id)
+    pitch_die = starter.pitch_die or ""
     return InitialTeamState(
         team_id=team.team_id,
         lineup=lineup_ids,
@@ -85,5 +131,18 @@ def _initialize_team(team: TeamData) -> InitialTeamState:
         bench=bench,
         bullpen=bullpen,
         active_pitcher_id=team.starting_pitcher_id,
-        active_pitch_die=team.player(team.starting_pitcher_id).pitch_die or "",
+        active_pitch_die=pitch_die,
+        pitcher_state=PitcherState(
+            player_id=starter.player_id,
+            role=starter.role,
+            base_pitch_die=pitch_die,
+            current_pitch_die=pitch_die,
+        ),
+        pitcher_lineup_slot=next(
+            (
+                index for index, entry in enumerate(team.lineup)
+                if entry.position == "P"
+            ),
+            None,
+        ),
     )

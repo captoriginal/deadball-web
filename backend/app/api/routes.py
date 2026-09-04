@@ -31,6 +31,7 @@ from deadball_generator.generator import (
 )
 from deadball_generator.rules import RULES_VERSION
 from deadball_generator import cache_policy
+from deadball_core import build_generator_game
 
 router = APIRouter()
 settings = get_settings()
@@ -518,6 +519,75 @@ def generate_game(
         game_text=generated_row.game_text,
         cached=False,
     )
+
+
+@router.get("/games/{game_id}/play.json", tags=["games"])
+def get_play_game(
+    game_id: str,
+    session: Session = Depends(get_session),
+) -> dict:
+    """Export cached generated stats as the canonical offline gameplay file."""
+    game = session.exec(
+        select(models.Game).where(models.Game.game_id == game_id)
+    ).first()
+    if game is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Game not found; list games first",
+        )
+    generated = session.exec(
+        select(models.GameGenerated).where(models.GameGenerated.game_id == game.id)
+    ).first()
+    if generated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Generate the game before exporting it for Deadball Play",
+        )
+    if not game.away_team or not game.home_team:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Game is missing team identity required for gameplay export",
+        )
+    arguments = {
+        "game_id": game.game_id,
+        "game_date": str(game.game_date),
+        "away_team": game.away_team,
+        "home_team": game.home_team,
+        "away_short": game.away_team_short,
+        "home_short": game.home_team_short,
+    }
+    try:
+        return build_generator_game(
+            generated.stats,
+            **arguments,
+        ).to_dict()
+    except (TypeError, ValueError, json.JSONDecodeError) as cached_error:
+        raw = session.exec(
+            select(models.GameRawStats).where(models.GameRawStats.game_id == game.id)
+        ).first()
+        if raw is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Generated game cannot be exported for play: {cached_error}",
+            ) from cached_error
+    try:
+        parsed = json.loads(generated.stats)
+        trait_mode = parsed.get("meta", {}).get("trait_mode", "standard")
+        regenerated = generate_game_from_raw(
+            game_id=game.game_id,
+            date=str(game.game_date),
+            home_team=game.home_team,
+            away_team=game.away_team,
+            raw_stats=raw.payload,
+            allow_network=False,
+            trait_mode=trait_mode,
+        )
+        return build_generator_game(regenerated["stats"], **arguments).to_dict()
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Generated game cannot be regenerated for play: {exc}",
+        ) from exc
 
 
 @router.get("/games/{game_id}/scorecard.pdf", tags=["games"])

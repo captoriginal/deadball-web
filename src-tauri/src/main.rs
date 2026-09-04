@@ -74,6 +74,10 @@ fn backend_pythonpath(backend_dir: &Path) -> Option<OsString> {
     if generator_src.exists() {
         paths.push(generator_src);
     }
+    let core_src = backend_dir.join("deadball_core/src");
+    if core_src.exists() {
+        paths.push(core_src);
+    }
     env::join_paths(paths).ok()
 }
 

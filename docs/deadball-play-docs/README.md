@@ -10,6 +10,8 @@ The intended minimal setup is:
 
 ## Project Status
 
+Current status: **Version 1 generator integration, solo-manager pitching, and MLB-derived playtest complete**
+
 ## Repository Strategy
 
 Deadball Play should be developed **inside the existing `deadball-web` repository**, not in a new repository.
@@ -39,9 +41,9 @@ The exact paths may differ after Phase 0 inspects the current repository. The im
 
 Keeping these components in one repository avoids unnecessary package-publication and cross-repository coordination overhead. The boundaries should nevertheless remain clean enough that `deadball_core` or `deadball_play` could be extracted later if useful.
 
-Current status: **Phase 6 bunting and hit-and-run complete**
-
-The existing Deadball team/game generator already produces Deadball player ratings from MLB data. The next major development goal is a standalone rules engine that can conduct a complete Modern Era Second Edition game from first pitch to final out.
+The existing Deadball team/game generator produces player ratings from MLB data,
+and the standalone rules engine can now conduct a complete Modern Era Second
+Edition game from first pitch to final out.
 
 No implementation of the new conductor/TUI should begin by inventing new baseball mechanics. Version 1 should remain faithful to Deadball Second Edition.
 
@@ -169,6 +171,15 @@ Core project documents:
 - [`phase-4-review.md`](phase-4-review.md) — runner advancement, productive outs, and scoring
 - [`phase-5-review.md`](phase-5-review.md) — single steals, double steals, traits, and legal actions
 - [`phase-6-review.md`](phase-6-review.md) — Bunting and Hit & Run tables with complete state transitions
+- [`phase-7-review.md`](phase-7-review.md) — persistent Pitch Die improvements, reductions, and fatigue
+- [`phase-8-review.md`](phase-8-review.md) — substitutions, lineup continuity, roster safety, and defensive alignment
+- [`phase-9-review.md`](phase-9-review.md) — inning transitions, regulation endings, extra innings, and walk-offs
+- [`phase-10-review.md`](phase-10-review.md) — published Daring decisions and transparent solo-manager procedures
+- [`phase-11-review.md`](phase-11-review.md) — versioned saves, autosave, resume, structured history, and exact undo
+- [`phase-12-review.md`](phase-12-review.md) — factual varied narration, stable scoring guidance, and TTS-ready prose
+- [`phase-13-review.md`](phase-13-review.md) — keyboard-first gameplay, scorekeeping pauses, inspection, roster moves, and saves
+- [`phase-14-review.md`](phase-14-review.md) — deterministic complete games, integration coverage, and playtest findings
+- [`version-1-integration-review.md`](version-1-integration-review.md) — generator handoff, complete solo-manager control, and MLB-derived release playtest
 - [`generator-backlog.md`](generator-backlog.md) — deferred generator and contract-integration work
 
 ## Guiding Principles

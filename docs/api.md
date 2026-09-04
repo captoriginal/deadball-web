@@ -30,6 +30,11 @@ SQLite tables are created on startup via `db.init_db`.
 - Response: PDF (two pages; away=page 0, home=page 1). The `side` query is a hint for clients on which page to display.
 - Behavior: requires a prior generate; fills lineup/bench/pitcher fields from cached generated stats; returns 404 if not generated.
 
+### Download a Deadball Play Game
+- `GET /api/games/{game_id}/play.json`
+- Response: portable Deadball Play schema-v1 JSON.
+- Behavior: converts the cached generated output to the canonical Play contract. If an older generated cache is incompatible and a raw boxscore is available, it regenerates offline from that raw data without rewriting the database. Returns 404 when the game has not been generated and 422 when no compatible contract can be produced.
+
 ## Legacy Roster Endpoints (secondary)
 - `POST /api/generate` (roster)
 - `GET /api/rosters`

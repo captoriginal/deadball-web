@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON_BIN="$PROJECT_ROOT/.venv/bin/python"
+
+if [ ! -x "$PYTHON_BIN" ]; then
+  PYTHON_BIN="python3"
+fi
+
+export PYTHONPATH="$PROJECT_ROOT/backend/deadball_play/src:$PROJECT_ROOT/backend/deadball_core/src:$PROJECT_ROOT/backend/deadball_generator/src${PYTHONPATH:+:$PYTHONPATH}"
+exec "$PYTHON_BIN" -m deadball_play "$@"

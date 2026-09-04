@@ -79,6 +79,7 @@ class PlayEvent:
     defense_outcome: str | None = None
     runner_moves: tuple[RunnerMove, ...] = ()
     runs_scored: int = 0
+    out_type: str | None = None
 
 
 @dataclass(frozen=True)
@@ -93,8 +94,20 @@ class StealEvent:
 
 
 @dataclass(frozen=True)
+class SubstitutionEvent:
+    event_type: str
+    team_id: str
+    incoming_player_id: str | None = None
+    outgoing_player_id: str | None = None
+    lineup_slot: int | None = None
+    position: str | None = None
+    base: str | None = None
+    details: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ActionResult:
-    event: PlayEvent | StealEvent
+    event: PlayEvent | StealEvent | SubstitutionEvent
     new_state: GameState
-    dice: DiceRecord | StealDiceRecord | BuntDiceRecord | HitAndRunDiceRecord
+    dice: DiceRecord | StealDiceRecord | BuntDiceRecord | HitAndRunDiceRecord | None
     rule_trace: tuple[RuleTraceEntry, ...]

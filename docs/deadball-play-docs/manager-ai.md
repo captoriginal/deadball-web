@@ -55,6 +55,40 @@ The manager should use Daring for decisions the rulebook explicitly identifies o
 
 Do not add dozens of sabermetric tactical rules in Version 1.
 
+## Implemented Version 1 Procedure
+
+The initial engine policy uses one decision opportunity at a time and does not
+roll until a documented trigger exists.
+
+Offensive opportunities use this priority:
+
+1. steal home, only when aggressive steal-home automation is enabled
+2. bunt in the fifth inning or later, with fewer than two outs, a runner on
+   first or second, and the score within two runs
+3. hit-and-run with a runner on first, other bases empty, and fewer than two
+   outs
+4. steal third with third open and fewer than two outs
+5. steal second when second is open
+
+The bunt opportunity comes before ordinary hit-and-run and steal opportunities
+because Daring reverses the choice: declining to bunt is daring, while bunting
+is conservative. Outside a conventional late/close bunt situation, hit-and-run
+retains priority over a steal.
+
+Pitching opportunities require an available bullpen pitcher:
+
+- before the fifth, consider a daring early hook after four runs allowed or a
+  loss of at least two Pitch Die levels
+- at an inning boundary after a starter completes six innings, daring means
+  leaving the starter in
+- at an inning boundary after a reliever completes one inning, daring means
+  allowing a second inning
+
+Replacement selection prefers the highest base Pitch Die, then a same-handed
+matchup with the upcoming non-switch hitter, then original bullpen order. These
+thresholds and priorities are Deadball Play application procedure, not
+published rules, and should be revisited through playtesting.
+
 ---
 
 ## Manager State

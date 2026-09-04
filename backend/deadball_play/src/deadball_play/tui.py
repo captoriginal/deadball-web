@@ -1,1 +1,925 @@
-"""Keyboard-first terminal presentation boundary."""
+"""Keyboard-first terminal conductor built on structured core APIs."""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import fields
+import random
+from pathlib import Path
+import sys
+import textwrap
+from typing import Callable, TextIO
+
+from deadball_core import (
+    ActionResult,
+    GameState,
+    RandomDice,
+    decide_opportunity,
+    defensive_substitution,
+    initialize_game,
+    legal_actions,
+    load_generated_game,
+    offensive_opportunity,
+    pinch_hit,
+    pinch_run,
+    pitching_change,
+    pitching_opportunity,
+    resolve_bunt,
+    resolve_hit_and_run,
+    resolve_steal,
+    resolve_swing,
+    select_replacement_pitcher,
+    switch_defensive_positions,
+)
+
+from .narration import NarrationResult, Narrator
+from .demo import load_demo_game
+from .session import GameSession, HistoryEntry, SessionConfig, SessionError
+from .web_cache import load_cached_game
+
+
+InputFunction = Callable[[str], str]
+
+ACTION_LABELS = {
+    "swing": "Swing",
+    "bunt": "Bunt",
+    "hit_and_run": "Hit & Run",
+    "steal_second": "Steal second",
+    "steal_third": "Steal third",
+    "double_steal": "Double steal",
+    "steal_home": "Steal home",
+}
+
+
+class TerminalApp:
+    """Synchronous terminal UI with injectable input and output."""
+
+    def __init__(
+        self,
+        session: GameSession,
+        *,
+        narrator: Narrator | None = None,
+        input_func: InputFunction = input,
+        output: TextIO = sys.stdout,
+        clear_screen: bool = False,
+    ) -> None:
+        self.session = session
+        self.narrator = narrator or Narrator()
+        self.input = input_func
+        self.output = output
+        self.clear_screen = clear_screen
+        self._narrations: dict[int, NarrationResult] = {}
+        self._notice: str | None = None
+
+    def run(self) -> int:
+        """Run until the game ends or the user saves and quits."""
+        while True:
+            try:
+                if self.session.pending_event is not None:
+                    self._show(self.pending_screen())
+                    command = self.input(
+                        "Enter=recorded  [?] Rule  [Y] History  [U] Undo  "
+                        "[K] Save  [Q] Save & quit: "
+                    ).strip().upper()
+                    if command == "":
+                        self.session.confirm_scorekeeping()
+                    elif command == "?":
+                        self._pause(self.rule_screen())
+                    elif command == "Y":
+                        self._pause(self.history_screen())
+                    elif command == "U":
+                        self._undo()
+                    elif command == "K":
+                        self._save()
+                    elif command == "Q" and self._save():
+                        return 0
+                    else:
+                        self._notice = (
+                            "Unknown command; the play is still awaiting confirmation."
+                        )
+                    continue
+
+                if self.session.state.is_final:
+                    self._show(self.game_screen())
+                    return 0
+
+                if self._offense_is_computer():
+                    self._perform_computer_action()
+                    continue
+
+                self._show(self.game_screen())
+                command = self.input("Choose an action: ").strip().upper()
+                if self._handle_ready_command(command):
+                    return 0
+            except (EOFError, KeyboardInterrupt):
+                self._write("\nInput ended. The current autosave has been preserved.")
+                return 130
+            except (SessionError, ValueError, OSError) as exc:
+                self._notice = f"Could not complete that action: {exc}"
+
+    def pending_screen(self) -> str:
+        entry = self.session.history[-1]
+        narration = self._narration_for(len(self.session.history) - 1)
+        sections = [self.game_screen()]
+        if self._notice:
+            sections.append(self._consume_notice())
+        sections.extend(("PLAY", render_dice(entry), _wrap(narration.play_text)))
+        if narration.transition_text:
+            sections.append(_wrap(narration.transition_text))
+        if narration.scoring_guidance:
+            sections.append("\n".join(narration.scoring_guidance))
+        sections.append("Press Enter when scored.")
+        return "\n\n".join(section for section in sections if section)
+
+    def game_screen(self) -> str:
+        screen = render_game_screen(self.session.state, self.session)
+        if not self.session.history:
+            return screen
+        lines = ["RECENT PLAYS"]
+        start = max(0, len(self.session.history) - 3)
+        for index in range(start, len(self.session.history)):
+            entry = self.session.history[index]
+            prefix = f"{_half_label(entry.state_before)}: "
+            lines.append(
+                textwrap.fill(
+                    self._narration_for(index).play_text,
+                    width=88,
+                    initial_indent=prefix,
+                    subsequent_indent=" " * len(prefix),
+                )
+            )
+        return screen + "\n\n" + "\n".join(lines)
+
+    def rule_screen(self) -> str:
+        if not self.session.history:
+            return "RULE EXPLANATION\n\nNo ruling has been made yet."
+        entry = self.session.history[-1]
+        lines = ["RULE EXPLANATION", render_dice(entry)]
+        lines.extend(
+            f"{trace.stage}: {trace.detail}\n  {trace.rule_reference}"
+            for trace in entry.rule_trace
+        )
+        return "\n\n".join(line for line in lines if line)
+
+    def history_screen(self) -> str:
+        if not self.session.history:
+            return "HISTORY\n\nNo plays yet."
+        lines = ["HISTORY"]
+        for index, entry in enumerate(self.session.history):
+            before = entry.state_before
+            narration = self._narration_for(index)
+            marker = "" if entry.scorekeeping_confirmed else " (awaiting scorecard)"
+            prefix = f"{entry.sequence:>3}. {_half_label(before)} "
+            lines.append(
+                textwrap.fill(
+                    narration.play_text + marker,
+                    width=88,
+                    initial_indent=prefix,
+                    subsequent_indent=" " * len(prefix),
+                )
+            )
+        return "\n".join(lines)
+
+    def lineup_screen(self) -> str:
+        return "\n\n".join(
+            render_lineup(self.session.state, side) for side in ("away", "home")
+        )
+
+    def bullpen_screen(self) -> str:
+        return "\n\n".join(
+            render_bullpen(self.session.state, side) for side in ("away", "home")
+        )
+
+    def _handle_ready_command(self, command: str) -> bool:
+        actions = set(legal_actions(self.session.state))
+        has_steal = any(
+            action.startswith("steal") or action == "double_steal"
+            for action in actions
+        )
+        if command == "S" and "swing" in actions:
+            self._perform_play_action("swing")
+        elif command == "B" and "bunt" in actions:
+            self._perform_play_action("bunt")
+        elif command == "H" and "hit_and_run" in actions:
+            self._perform_play_action("hit_and_run")
+        elif command == "T" and has_steal:
+            self._steal_flow(actions)
+        elif command == "P" and self._offense_team_state().bench:
+            self._pinch_hit_flow()
+        elif (
+            command == "R"
+            and self._offense_team_state().bench
+            and any(self.session.state.bases)
+        ):
+            self._pinch_run_flow()
+        elif command == "M" and self._defense_team_state().bullpen:
+            self._pitching_change_flow()
+        elif command == "D" and self._defense_team_state().bench:
+            self._defensive_substitution_flow()
+        elif command == "X":
+            self._position_switch_flow()
+        elif command == "L":
+            self._pause(self.lineup_screen())
+        elif command == "V":
+            self._pause(self.bullpen_screen())
+        elif command == "Y":
+            self._pause(self.history_screen())
+        elif command == "?":
+            self._pause(self.rule_screen())
+        elif command == "U":
+            self._undo()
+        elif command == "K":
+            self._save()
+        elif command == "Q":
+            return self._save()
+        else:
+            self._notice = "Unknown or unavailable command; game state was not changed."
+        return False
+
+    def _steal_flow(self, actions: set[str]) -> None:
+        steals = [
+            action
+            for action in (
+                "steal_second",
+                "steal_third",
+                "double_steal",
+                "steal_home",
+            )
+            if action in actions
+        ]
+        selected = self._choose_value(
+            "STEAL", steals, lambda item: ACTION_LABELS[item]
+        )
+        if selected and self._confirm(ACTION_LABELS[selected] + "?"):
+            self._perform_play_action(selected)
+
+    def _pinch_hit_flow(self) -> None:
+        team_state, team_data = self._offense_team()
+        selected = self._choose_player(
+            "AVAILABLE PINCH HITTERS", team_state.bench, team_data
+        )
+        if selected is None:
+            return
+        batter = team_data.player(team_state.lineup[team_state.batting_order_index])
+        incoming = team_data.player(selected)
+        if self._confirm(
+            f"{incoming.name} will pinch hit for {batter.name}. Continue?"
+        ):
+            self.session.perform(lambda state, dice: pinch_hit(state, selected))
+
+    def _pinch_run_flow(self) -> None:
+        team_state, team_data = self._offense_team()
+        occupied = [
+            base
+            for base, runner in zip(
+                ("1B", "2B", "3B"), self.session.state.bases
+            )
+            if runner is not None
+        ]
+        base = self._choose_value("SELECT RUNNER", occupied, lambda item: item)
+        if base is None:
+            return
+        selected = self._choose_player(
+            "AVAILABLE PINCH RUNNERS", team_state.bench, team_data
+        )
+        if selected is None:
+            return
+        runner_id = self.session.state.bases[("1B", "2B", "3B").index(base)]
+        assert runner_id is not None
+        if self._confirm(
+            f"{team_data.player(selected).name} will run for "
+            f"{team_data.player(runner_id).name} at {base}. Continue?"
+        ):
+            self.session.perform(lambda state, dice: pinch_run(state, base, selected))
+
+    def _pitching_change_flow(self) -> None:
+        side = _defense_side(self.session.state)
+        team_state, team_data = _team(self.session.state, side)
+        selected = self._choose_player(
+            "AVAILABLE RELIEVERS", team_state.bullpen, team_data
+        )
+        if selected is None:
+            return
+        if self._confirm(f"Bring in {team_data.player(selected).name}?"):
+            self.session.perform(
+                lambda state, dice: pitching_change(state, side, selected)
+            )
+
+    def _defensive_substitution_flow(self) -> None:
+        side = _defense_side(self.session.state)
+        team_state, team_data = _team(self.session.state, side)
+        positions = [
+            item.position
+            for item in team_state.active_defense
+            if item.position != "P"
+        ]
+        position = self._choose_value(
+            "DEFENSIVE POSITION", positions, lambda item: item
+        )
+        if position is None:
+            return
+        selected = self._choose_player(
+            "AVAILABLE DEFENDERS", team_state.bench, team_data
+        )
+        if selected is None:
+            return
+        if self._confirm(f"Put {team_data.player(selected).name} at {position}?"):
+            self.session.perform(
+                lambda state, dice: defensive_substitution(
+                    state, side, position, selected
+                )
+            )
+
+    def _position_switch_flow(self) -> None:
+        side = _defense_side(self.session.state)
+        team_state, _ = _team(self.session.state, side)
+        positions = [
+            item.position
+            for item in team_state.active_defense
+            if item.position != "P"
+        ]
+        first = self._choose_value("FIRST POSITION", positions, lambda item: item)
+        if first is None:
+            return
+        second = self._choose_value(
+            "SECOND POSITION",
+            [position for position in positions if position != first],
+            lambda item: item,
+        )
+        if second and self._confirm(f"Switch {first} and {second}?"):
+            self.session.perform(
+                lambda state, dice: switch_defensive_positions(
+                    state, side, first, second
+                )
+            )
+
+    def _perform_computer_action(self) -> None:
+        side = _offense_side(self.session.state)
+        daring = (
+            self.session.config.away_daring
+            if side == "away"
+            else self.session.config.home_daring
+        )
+        assert daring is not None
+        offense_decisions = []
+        pitching_decisions = []
+
+        def choose_and_resolve(state: GameState, dice: RandomDice) -> ActionResult:
+            pitching_result = self._computer_pitching_result(
+                state, dice, pitching_decisions
+            )
+            if pitching_result is not None:
+                return pitching_result
+            opportunity = offensive_opportunity(state)
+            if opportunity is None:
+                return resolve_swing(state, dice)
+            decision = decide_opportunity(opportunity, daring, dice)
+            offense_decisions.append(decision)
+            return _resolve_action(state, decision.selected_choice, dice)
+
+        self.session.perform(choose_and_resolve)
+        team_data = _team(self.session.state, side)[1]
+        notices = self._pitching_notices(pitching_decisions)
+        if offense_decisions:
+            decision = offense_decisions[0]
+            notices.append(
+                f"{team_data.short_name} manager: Daring {decision.daring}, "
+                f"d20 {decision.roll}; {ACTION_LABELS[decision.selected_choice]}."
+            )
+        elif not pitching_decisions:
+            notices.append(f"{team_data.short_name} manager chooses Swing.")
+        self._notice = " ".join(notices)
+
+    def _perform_play_action(self, action: str) -> None:
+        pitching_decisions = []
+
+        def resolve_with_manager(state: GameState, dice: RandomDice) -> ActionResult:
+            pitching_result = self._computer_pitching_result(
+                state, dice, pitching_decisions
+            )
+            if pitching_result is not None:
+                return pitching_result
+            return _resolve_action(state, action, dice)
+
+        self.session.perform(resolve_with_manager)
+        notices = self._pitching_notices(pitching_decisions)
+        if notices:
+            self._notice = " ".join(notices)
+
+    def _computer_pitching_result(self, state, dice, decisions):
+        side = _defense_side(state)
+        if self._team_control(side) != "computer":
+            return None
+        opportunity = pitching_opportunity(
+            state,
+            side,
+            at_inning_boundary=self._at_inning_boundary(),
+        )
+        if opportunity is None:
+            return None
+        daring = (
+            self.session.config.away_daring
+            if side == "away"
+            else self.session.config.home_daring
+        )
+        assert daring is not None
+        decision = decide_opportunity(opportunity, daring, dice)
+        decisions.append((side, decision))
+        if decision.selected_choice != "change_pitcher":
+            return None
+        replacement = select_replacement_pitcher(state, side)
+        if replacement is None:
+            return None
+        return pitching_change(state, side, replacement)
+
+    def _pitching_notices(self, decisions):
+        notices = []
+        for side, decision in decisions:
+            team_data = _team(self.session.state, side)[1]
+            choice = decision.selected_choice.replace("_", " ").capitalize()
+            notices.append(
+                f"{team_data.short_name} pitching decision: Daring "
+                f"{decision.daring}, d20 {decision.roll}; {choice}."
+            )
+        return notices
+
+    def _at_inning_boundary(self) -> bool:
+        if not self.session.history:
+            return False
+        before = self.session.history[-1].state_before
+        after = self.session.state
+        return (before.inning, before.half) != (after.inning, after.half)
+
+    def _team_control(self, side: str) -> str:
+        return (
+            self.session.config.away_control
+            if side == "away"
+            else self.session.config.home_control
+        )
+
+    def _offense_is_computer(self) -> bool:
+        side = _offense_side(self.session.state)
+        return self._team_control(side) == "computer"
+
+    def _offense_team_state(self):
+        return self._offense_team()[0]
+
+    def _defense_team_state(self):
+        return _team(self.session.state, _defense_side(self.session.state))[0]
+
+    def _offense_team(self):
+        return _team(self.session.state, _offense_side(self.session.state))
+
+    def _choose_player(self, title, player_ids, team_data):
+        return self._choose_value(
+            title,
+            list(player_ids),
+            lambda player_id: _player_summary(team_data.player(player_id)),
+        )
+
+    def _choose_value(self, title, values, label):
+        if not values:
+            self._notice = f"{title.title()}: none available."
+            return None
+        self._write(title)
+        for index, value in enumerate(values, start=1):
+            self._write(f"{index}. {label(value)}")
+        raw = self.input("Select number (Enter cancels): ").strip()
+        if not raw:
+            return None
+        try:
+            selected = int(raw)
+        except ValueError:
+            self._notice = "Selection must be a number."
+            return None
+        if not 1 <= selected <= len(values):
+            self._notice = "Selection is outside the available range."
+            return None
+        return values[selected - 1]
+
+    def _confirm(self, prompt: str) -> bool:
+        response = self.input(f"{prompt} [Y/n] ").strip().upper()
+        return response in {"", "Y", "YES"}
+
+    def _undo(self) -> None:
+        if not self.session.history:
+            self._notice = "There is no action to undo."
+            return
+        entry = self.session.history[-1]
+        narration = self._narration_for(len(self.session.history) - 1)
+        if self._confirm(f"Undo: {narration.play_text}"):
+            self.session.undo()
+            self._narrations.pop(entry.sequence, None)
+            self._notice = "Last action undone; game state and dice were restored."
+
+    def _save(self) -> bool:
+        if self.session.autosave_path is None:
+            name = self.input("Save path (Enter cancels): ").strip()
+            if not name:
+                self._notice = "Save cancelled."
+                return False
+            path = self.session.save(Path(name).expanduser())
+        else:
+            path = self.session.save()
+        self._notice = f"Saved to {path}."
+        return True
+
+    def _narration_for(self, index: int) -> NarrationResult:
+        entry = self.session.history[index]
+        cached = self._narrations.get(entry.sequence)
+        if cached is not None:
+            return cached
+        after = (
+            self.session.history[index + 1].state_before
+            if index + 1 < len(self.session.history)
+            else self.session.state
+        )
+        result = self.narrator.render(entry.event, entry.state_before, after)
+        self._narrations[entry.sequence] = result
+        return result
+
+    def _show(self, text: str) -> None:
+        if self.clear_screen:
+            self.output.write("\033[2J\033[H")
+        if self._notice and self.session.pending_event is None:
+            text = f"{text}\n\n{self._consume_notice()}"
+        self._write(text)
+
+    def _pause(self, text: str) -> None:
+        self._write(text)
+        self.input("Press Enter to return. ")
+
+    def _consume_notice(self) -> str:
+        notice = self._notice or ""
+        self._notice = None
+        return notice
+
+    def _write(self, text: str) -> None:
+        self.output.write(text.rstrip() + "\n")
+        self.output.flush()
+
+
+def render_game_screen(
+    state: GameState, session: GameSession | None = None
+) -> str:
+    """Render the always-visible game information and available commands."""
+    away = state.source.teams.away
+    home = state.source.teams.home
+    status = (
+        "FINAL" if state.is_final else f"{state.half.upper()} {_ordinal(state.inning)}"
+    )
+    lines = [
+        "=" * 60,
+        (
+            f"{away.short_name} {state.away_score:<3} "
+            f"{status:^34} {home.short_name} {state.home_score}"
+        ),
+        f"Outs: {state.outs}    Runners: {_bases_text(state)}",
+    ]
+    if not state.is_final:
+        offense_state, offense_data = _team(state, _offense_side(state))
+        defense_state, defense_data = _team(state, _defense_side(state))
+        batter = offense_data.player(
+            offense_state.lineup[offense_state.batting_order_index]
+        )
+        pitcher = defense_data.player(defense_state.active_pitcher_id or "")
+        position = _active_position(
+            offense_state, batter.player_id, batter.positions
+        )
+        lines.extend(
+            (
+                "",
+                f"Batter:  {batter.name} - {position} - {batter.bats}",
+                (
+                    f"         BT {batter.bt}   OBT {batter.obt}"
+                    f"{_traits(batter.traits)}"
+                ),
+                f"Pitcher: {pitcher.name} - {pitcher.throws}HP",
+                (
+                    f"         Pitch Die {defense_state.active_pitch_die}"
+                    f"{_traits(pitcher.traits)}"
+                ),
+                "",
+                _command_menu(state, session),
+            )
+        )
+    lines.append("=" * 60)
+    return "\n".join(lines)
+
+
+def render_dice(entry: HistoryEntry) -> str:
+    if entry.dice is None:
+        return "Dice: none"
+    labels = {
+        "swing_score": "d100",
+        "pitch_die_roll": (
+            entry.dice.pitch_die if hasattr(entry.dice, "pitch_die") else "Pitch"
+        ),
+        "mss": "MSS",
+        "roll": "Roll",
+        "modified_roll": "Modified",
+        "hit_table_roll": "Hit d20",
+        "modified_hit_table_roll": "Modified hit",
+        "defense_roll": "DEF d12",
+        "modified_defense_roll": "Modified DEF",
+        "target_bonus": "Target bonus",
+        "adjusted_bt": "Adjusted BT",
+        "adjusted_obt": "Adjusted OBT",
+    }
+    hidden = {
+        "pitch_die",
+        "signed_pitch_value",
+        "runner_modifier",
+        "base_modifier",
+        "catcher_modifier",
+        "action",
+        "steal",
+        "swing",
+    }
+    parts = []
+    for field in fields(entry.dice):
+        value = getattr(entry.dice, field.name)
+        if value is None or field.name in hidden:
+            continue
+        label = labels.get(field.name, field.name.replace("_", " ").title())
+        parts.append(f"{label}: {value}")
+    if hasattr(entry.dice, "signed_pitch_value"):
+        parts.insert(2, f"Pitch value: {entry.dice.signed_pitch_value:+d}")
+    if hasattr(entry.dice, "steal"):
+        steal = entry.dice.steal
+        parts.insert(0, f"Steal d20: {steal.roll} -> {steal.modified_roll}")
+    if hasattr(entry.dice, "swing"):
+        swing = entry.dice.swing
+        parts.insert(1, f"Swing d100: {swing.swing_score}; MSS {swing.mss}")
+    return textwrap.fill(
+        "Dice: " + " | ".join(parts),
+        width=88,
+        subsequent_indent="      ",
+        break_long_words=False,
+    )
+
+
+def render_lineup(state: GameState, side: str) -> str:
+    team_state, team_data = _team(state, side)
+    assignments = {
+        item.player_id: item.position for item in team_state.active_defense
+    }
+    lines = [f"{team_data.name.upper()} LINEUP"]
+    for index, player_id in enumerate(team_state.lineup):
+        player = team_data.player(player_id)
+        marker = ">" if index == team_state.batting_order_index else " "
+        position = assignments.get(player_id) or _active_position(
+            team_state, player_id, player.positions
+        )
+        lines.append(
+            f"{marker}{index + 1} {player.name:<24} {position:<3} "
+            f"{player.bats or '-':<1} BT {player.bt or '-':>2} "
+            f"OBT {player.obt or '-':>2}{_traits(player.traits)}"
+        )
+    if team_state.removed_players:
+        names = ", ".join(
+            team_data.player(item).name for item in team_state.removed_players
+        )
+        lines.append(f"Out of game: {names}")
+    return "\n".join(lines)
+
+
+def render_bullpen(state: GameState, side: str) -> str:
+    team_state, team_data = _team(state, side)
+    current = team_data.player(team_state.active_pitcher_id or "")
+    lines = [
+        f"{team_data.name.upper()} PITCHERS",
+        f"Current: {current.name} ({current.throws}HP, {team_state.active_pitch_die})",
+        "Available:",
+    ]
+    if not team_state.bullpen:
+        lines.append("  None")
+    for index, player_id in enumerate(team_state.bullpen, start=1):
+        player = team_data.player(player_id)
+        lines.append(
+            f"  {index}. {player.name} ({player.throws}HP, {player.pitch_die})"
+        )
+    return "\n".join(lines)
+
+
+def _command_menu(state: GameState, session: GameSession | None) -> str:
+    actions = set(legal_actions(state))
+    commands = []
+    for key, action in (
+        ("S", "swing"),
+        ("B", "bunt"),
+        ("H", "hit_and_run"),
+    ):
+        if action in actions:
+            commands.append(f"[{key}] {ACTION_LABELS[action]}")
+    if any(
+        action.startswith("steal") or action == "double_steal"
+        for action in actions
+    ):
+        commands.append("[T] Steal")
+    if session is not None:
+        offense = _team(state, _offense_side(state))[0]
+        defense = _team(state, _defense_side(state))[0]
+        if offense.bench:
+            commands.append("[P] Pinch hit")
+            if any(state.bases):
+                commands.append("[R] Pinch run")
+        if defense.bullpen:
+            commands.append("[M] Mound change")
+        if defense.bench:
+            commands.append("[D] Defensive sub")
+        commands.append("[X] Position switch")
+    commands.extend(
+        (
+            "[L] Lineups",
+            "[V] Pitchers",
+            "[Y] History",
+            "[?] Rule",
+            "[U] Undo",
+            "[K] Save",
+            "[Q] Save & quit",
+        )
+    )
+    return "\n".join(
+        "  ".join(commands[index:index + 3])
+        for index in range(0, len(commands), 3)
+    )
+
+
+def _resolve_action(
+    state: GameState, action: str, dice: RandomDice
+) -> ActionResult:
+    if action == "swing":
+        return resolve_swing(state, dice)
+    if action == "bunt":
+        return resolve_bunt(state, dice)
+    if action == "hit_and_run":
+        return resolve_hit_and_run(state, dice)
+    if action in {
+        "steal_second",
+        "steal_third",
+        "double_steal",
+        "steal_home",
+    }:
+        return resolve_steal(state, action, dice)
+    raise ValueError(f"unsupported manager action {action!r}")
+
+
+def _team(state: GameState, side: str):
+    if side == "away":
+        return state.away, state.source.teams.away
+    if side == "home":
+        return state.home, state.source.teams.home
+    raise ValueError(f"unknown side {side!r}")
+
+
+def _offense_side(state: GameState) -> str:
+    return "away" if state.half == "top" else "home"
+
+
+def _defense_side(state: GameState) -> str:
+    return "home" if state.half == "top" else "away"
+
+
+def _active_position(team_state, player_id: str, positions: tuple[str, ...]) -> str:
+    for assignment in team_state.active_defense:
+        if assignment.player_id == player_id:
+            return assignment.position
+    return positions[0] if positions else "-"
+
+
+def _player_summary(player) -> str:
+    if player.role in {"starter", "reliever"}:
+        return f"{player.name} - {player.throws}HP - {player.pitch_die}"
+    return (
+        f"{player.name} - {'/'.join(player.positions)} - {player.bats} - "
+        f"BT {player.bt} OBT {player.obt}{_traits(player.traits)}"
+    )
+
+
+def _traits(traits: tuple[str, ...]) -> str:
+    return "" if not traits else "   " + " ".join(traits)
+
+
+def _bases_text(state: GameState) -> str:
+    occupied = []
+    offense_data = _team(state, _offense_side(state))[1]
+    for base, player_id in zip(("1B", "2B", "3B"), state.bases):
+        if player_id is not None:
+            occupied.append(f"{base} {offense_data.player(player_id).name}")
+    return ", ".join(occupied) if occupied else "empty"
+
+
+def _half_label(state: GameState) -> str:
+    return f"{state.half.title()} {_ordinal(state.inning)}"
+
+
+def _wrap(text: str) -> str:
+    return textwrap.fill(text, width=88, break_long_words=False)
+
+
+def _ordinal(number: int) -> str:
+    if 10 <= number % 100 <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(number % 10, "th")
+    return f"{number}{suffix}"
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="deadball-play",
+        description="Play a generated Deadball game in the terminal.",
+    )
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--game", type=Path, help="generated game JSON")
+    source.add_argument("--resume", type=Path, help="saved session JSON")
+    source.add_argument(
+        "--demo", action="store_true", help="start a built-in fictional game"
+    )
+    source.add_argument(
+        "--cached-game",
+        metavar="MLB_GAME_ID",
+        help="start a generated game from the local Deadball Web database",
+    )
+    parser.add_argument(
+        "--database",
+        type=Path,
+        default=Path("backend/deadball_dev.db"),
+        help="Deadball Web SQLite database used by --cached-game",
+    )
+    parser.add_argument(
+        "--export-game",
+        type=Path,
+        help="also write the canonical schema-v1 game JSON",
+    )
+    parser.add_argument("--save", type=Path, help="autosave path for a new game")
+    parser.add_argument("--seed", type=int, help="optional reproducible new-game seed")
+    parser.add_argument(
+        "--away-control", choices=("human", "computer"), default="human"
+    )
+    parser.add_argument(
+        "--home-control", choices=("human", "computer"), default="human"
+    )
+    parser.add_argument("--away-daring", type=int)
+    parser.add_argument("--home-daring", type=int)
+    parser.add_argument(
+        "--no-clear", action="store_true", help="do not clear between screens"
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _parser()
+    args = parser.parse_args(argv)
+    try:
+        if args.resume:
+            session = GameSession.load(args.resume)
+        else:
+            if args.demo:
+                game = load_demo_game()
+            elif args.cached_game:
+                game = load_cached_game(args.cached_game, args.database)
+            else:
+                try:
+                    game_text = args.game.read_text(encoding="utf-8")
+                except FileNotFoundError as exc:
+                    raise ValueError(
+                        f"game file not found: {args.game}. "
+                        "Use --demo to start without a generated file."
+                    ) from exc
+                game = load_generated_game(game_text)
+            if args.export_game:
+                args.export_game.parent.mkdir(parents=True, exist_ok=True)
+                args.export_game.write_text(
+                    game.to_json(indent=2) + "\n", encoding="utf-8"
+                )
+            config = SessionConfig(
+                away_control=args.away_control,
+                home_control=args.home_control,
+                away_daring=args.away_daring,
+                home_daring=args.home_daring,
+            )
+            rng = (
+                RandomDice(random.Random(args.seed))
+                if args.seed is not None
+                else None
+            )
+            session = GameSession(
+                initialize_game(game),
+                rng=rng,
+                config=config,
+                autosave_path=args.save,
+            )
+            if args.save:
+                session.save()
+    except (OSError, ValueError) as exc:
+        parser.error(str(exc))
+    return TerminalApp(
+        session,
+        clear_screen=sys.stdout.isatty() and not args.no_clear,
+    ).run()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
