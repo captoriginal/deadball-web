@@ -18,6 +18,9 @@ backend/.env
 deadball_dev.db
 *.db
 saves/
+generated-games/
+scorecards/
+played-games/
 backend/deadball_generator/assets/Deadball Masters of the Game.pdf
 backend/.venv/
 

@@ -42,43 +42,58 @@ TEMPLATES: Mapping[str, tuple[_Template, ...]] = {
         _Template("{batter} strikes out.", ("batter",)),
         _Template("{pitcher} retires {batter} on strikes.", ("pitcher", "batter")),
         _Template("{batter} is retired on strikes.", ("batter",)),
+        _Template("{pitcher} wins the matchup and strikes out {batter}.", ("pitcher", "batter")),
+        _Template("{batter} goes down swinging against {pitcher}.", ("batter", "pitcher")),
     ),
     "walk": (
         _Template("{batter} draws a walk.", ("batter",)),
         _Template("{batter} takes ball four.", ("batter",)),
         _Template("{pitcher} issues a walk to {batter}.", ("pitcher", "batter")),
         _Template("{batter} reaches on a base on balls.", ("batter",)),
+        _Template("{batter} works a walk from {pitcher}.", ("batter", "pitcher")),
+        _Template("Ball four sends {batter} to first.", ("batter",)),
     ),
     "single": (
         _Template("{batter} singles.", ("batter",)),
         _Template("A base hit for {batter}.", ("batter",)),
         _Template("{batter} reaches on a single.", ("batter",)),
+        _Template("{batter} lines a clean single.", ("batter",)),
+        _Template("{batter} finds open grass for a base hit.", ("batter",)),
     ),
     "double": (
         _Template("{batter} doubles.", ("batter",)),
         _Template("A two-base hit for {batter}.", ("batter",)),
         _Template("{batter} reaches second with a double.", ("batter",)),
+        _Template("{batter} drives the ball for two bases.", ("batter",)),
+        _Template("{batter} pulls into second with a stand-up double.", ("batter",)),
     ),
     "triple": (
         _Template("{batter} triples.", ("batter",)),
         _Template("A three-base hit for {batter}.", ("batter",)),
         _Template("{batter} reaches third with a triple.", ("batter",)),
+        _Template("{batter} races into third with a triple.", ("batter",)),
     ),
     "home_run": (
         _Template("{batter} homers.", ("batter",)),
         _Template("A home run for {batter}.", ("batter",)),
         _Template("{batter} sends one out of the park.", ("batter",)),
         _Template("{batter} goes deep.", ("batter",)),
+        _Template("{batter} launches a home run.", ("batter",)),
+        _Template("{batter} circles the bases after sending it over the fence.", ("batter",)),
     ),
     "groundout": (
         _Template("{batter} grounds to {fielder}.", ("batter", "fielder")),
         _Template("A ground ball to {fielder} retires {batter}.", ("fielder", "batter")),
         _Template("{batter} is retired on a grounder to {fielder}.", ("batter", "fielder")),
+        _Template("{fielder} fields {batter}'s ground ball for the out.", ("fielder", "batter")),
+        _Template("{batter} bounces one to {fielder} and is retired.", ("batter", "fielder")),
     ),
     "flyout": (
         _Template("{batter} flies out to {fielder}.", ("batter", "fielder")),
         _Template("{fielder} retires {batter} on a fly ball.", ("fielder", "batter")),
         _Template("A fly ball to {fielder} is caught for the out.", ("fielder",)),
+        _Template("{fielder} settles under {batter}'s fly ball.", ("fielder", "batter")),
+        _Template("{batter} lifts a routine fly to {fielder}.", ("batter", "fielder")),
     ),
     "fielders_choice": (
         _Template("{batter} reaches on a fielder's choice.", ("batter",)),
@@ -88,6 +103,8 @@ TEMPLATES: Mapping[str, tuple[_Template, ...]] = {
         _Template("{batter} grounds into a double play.", ("batter",)),
         _Template("The defense turns two on {batter}.", ("batter",)),
         _Template("A ground ball from {batter} becomes a double play.", ("batter",)),
+        _Template("{fielder} starts a double play on {batter}'s grounder.", ("fielder", "batter")),
+        _Template("Two are gone as the defense doubles up {batter}.", ("batter",)),
     ),
     "hit_and_run_double_play": (
         _Template("The hit-and-run results in a double play on {batter}.", ("batter",)),
@@ -390,20 +407,37 @@ def _scoring_guidance(
         return _substitution_guidance(event, before)
     lines = []
     notation = event.scoring_notation
-    if notation:
+    if isinstance(event, PlayEvent) and event.event_type == "double_play":
+        fielder = _position_name(event.fielded_by) or "the infield"
+        lines.append(f"Score: DP (ground ball initiated by {fielder})")
+    elif isinstance(event, PlayEvent) and event.event_type == "triple_play":
+        fielder = _position_name(event.fielded_by) or "the infield"
+        lines.append(f"Score: TP (ground ball initiated by {fielder})")
+    elif notation:
         lines.append(f"Score: {notation}")
     elif isinstance(event, PlayEvent) and event.defense_outcome == "out":
         lines.append(f"Score: OUT (DEF {event.fielded_by})")
     elif isinstance(event, PlayEvent) and not event.resolved:
         lines.append("Score: Pending Oddities resolution")
-    for move in event.runner_moves:
-        runner = _player_name(before, move.runner_id)
-        if move.scored:
-            lines.append(f"Runner: {runner} -> HOME")
-        elif move.out:
-            lines.append(f"Runner: {runner} OUT ({move.from_base})")
-        elif move.to_base is not None:
-            lines.append(f"Runner: {runner} -> {move.to_base}")
+    outs = [move for move in event.runner_moves if move.out]
+    if isinstance(event, PlayEvent) and event.event_type in {
+        "double_play",
+        "triple_play",
+    }:
+        descriptions = "; ".join(
+            f"{_player_name(before, move.runner_id)} ({move.from_base})"
+            for move in outs
+        )
+        lines.append(f"Outs: {descriptions}")
+    else:
+        for move in event.runner_moves:
+            runner = _player_name(before, move.runner_id)
+            if move.scored:
+                lines.append(f"Runner: {runner} -> HOME")
+            elif move.out:
+                lines.append(f"Runner: {runner} OUT ({move.from_base})")
+            elif move.to_base is not None:
+                lines.append(f"Runner: {runner} -> {move.to_base}")
     if event.runs_scored:
         lines.append(f"Runs: {event.runs_scored}")
     if event.runs_scored or before.half != after.half or after.is_final:

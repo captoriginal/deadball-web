@@ -28,7 +28,19 @@ Install the Python packages and launch a fictional game from the repository:
 ./scripts/deadball-play --demo --save saves/demo-game.json
 ```
 
-In a normal laptop terminal, Deadball Play opens its three-column interface.
+Or launch the start screen and choose a generated game, cached game, saved
+session, Web-assisted generation, or the fictional demo:
+
+```bash
+./scripts/deadball-play
+```
+
+Web-assisted generation requires `./run_dev.sh` to be running. It stores the
+command-safe game JSON in `generated-games/`, the PDF score sheet in
+`scorecards/`, and the live save in `saves/`. Completed games are archived in
+`played-games/`.
+
+In a normal laptop terminal, Deadball Play opens its scoreboard-and-three-column interface.
 The left column holds the live state and questions, the middle column lists
 legal actions vertically, and `Tab` toggles the right column between the field
 and a scrollable narration log.

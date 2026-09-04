@@ -812,6 +812,38 @@ action without a rules or save-format regression.
 
 ---
 
+# Phase 16 — Release-Candidate Presentation and Launch Flow
+
+## Goal
+
+Turn the Phase 15 dashboard into a complete game-day interface and repair the
+handoff problems found during the first user playtest.
+
+## Implement
+
+- full-width inning and R/H/E scoreboard header
+- distinct away/home colors for team and player names
+- Field, Narration, and Box Score / Lineups tabs in Column 3
+- fixed six-line dice and outcome footer during scorekeeping confirmation
+- centered final box score with winning and losing pitchers
+- automatic final-session archive in `played-games/`
+- no-argument Deadball Play start screen
+- Web-assisted generation with default JSON, PDF, and save directories
+- shell-safe, space-free Play JSON download names
+- automatic recognition of save documents passed through `--game`
+- named fictional players in fresh demo games
+- expanded, non-mechanical narration variety
+- explicit double-play scoring guidance without an invented relay sequence
+- complete right-edge and bottom-border rendering in curses
+
+## Done When
+
+The reported playtest failures are reproduced and covered, generated and saved
+documents launch through the appropriate path, and a complete game reaches a
+centered final summary and automatic archive without changing game mechanics.
+
+---
+
 # Version 1 Release Gate
 
 Version 1 should not be considered complete until:

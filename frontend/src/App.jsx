@@ -948,9 +948,11 @@ export default function App() {
     } catch (err) {
       dateText = "game";
     }
-    const away = safeTeamLabel(game.away_team, "Away");
-    const home = safeTeamLabel(game.home_team, "Home");
-    return `${dateText} - ${away} @ ${home} - Deadball Play.json`;
+    const shellSafe = (value, fallback) =>
+      safeTeamLabel(value, fallback).replace(/\s+/g, "");
+    const away = shellSafe(game.away_team, "Away");
+    const home = shellSafe(game.home_team, "Home");
+    return `${dateText}-${away}-at-${home}-DeadballPlay.json`;
   }
 
   async function openExternal(url) {

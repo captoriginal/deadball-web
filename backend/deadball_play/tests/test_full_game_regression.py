@@ -241,7 +241,7 @@ def test_complete_managed_fixture_covers_tactics_fatigue_and_roster_moves():
     )
 
 
-def test_complete_terminal_playthrough_pauses_once_per_play():
+def test_complete_terminal_playthrough_pauses_once_per_play(tmp_path):
     session = new_session(1)
     output = StringIO()
 
@@ -253,6 +253,7 @@ def test_complete_terminal_playthrough_pauses_once_per_play():
         narrator=Narrator(random.Random(9)),
         input_func=play_input,
         output=output,
+        played_games_dir=tmp_path / "played-games",
     )
 
     assert app.run() == 0
@@ -271,22 +272,37 @@ def test_three_column_dashboard_renders_every_state_of_a_complete_game():
     rendered = 0
 
     while not session.state.is_final:
-        ready = app.dashboard_screen(field, width=150, height=34)
-        assert len(ready.splitlines()) == 34
+        ready = app.dashboard_screen(field, width=150, height=42)
+        assert len(ready.splitlines()) == 42
         session.perform(resolve_swing)
-        pending = app.dashboard_screen(narration, width=150, height=34)
+        pending = app.dashboard_screen(narration, width=150, height=42)
         assert "Press Enter when scored." in pending
         assert "NARRATION" in pending
         session.confirm_scorekeeping()
         rendered += 2
 
-    final = app.dashboard_screen(field, width=150, height=34)
+    final = app.dashboard_screen(field, width=150, height=42)
     assert "FINAL" in final
     assert "Game complete. Press Q to exit." in final
     assert rendered == 148
 
 
-def test_daring_managers_complete_game_without_human_strategy_input():
+def test_final_box_score_names_pitchers_and_archives_completed_game(tmp_path):
+    session = new_session(1)
+    finish_with_swings(session)
+    app = TerminalApp(session, played_games_dir=tmp_path / "played-games")
+
+    summary = "\n".join(app.final_summary_lines())
+    archive = app._archive_completed_game()
+
+    assert "FINAL BOX SCORE" in summary
+    assert "Winning pitcher: Visitors Starter" in summary
+    assert "Losing pitcher:  Hosts Starter" in summary
+    assert archive is not None and archive.exists()
+    assert archive.parent.name == "played-games"
+
+
+def test_daring_managers_complete_game_without_human_strategy_input(tmp_path):
     state = initialize_game(load_generated_game(canonical_game()))
     session = GameSession(
         state,
@@ -299,7 +315,12 @@ def test_daring_managers_complete_game_without_human_strategy_input():
         ),
     )
     output = StringIO()
-    app = TerminalApp(session, input_func=lambda prompt: "", output=output)
+    app = TerminalApp(
+        session,
+        input_func=lambda prompt: "",
+        output=output,
+        played_games_dir=tmp_path / "played-games",
+    )
 
     assert app.run() == 0
     event_types = tuple(entry.event.event_type for entry in session.history)

@@ -7,6 +7,40 @@ from deadball_core import GeneratedGame, load_generated_game
 
 POSITIONS = ("C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH")
 
+DEMO_NAMES = {
+    "Roadrunners": (
+        "Milo Hayes",
+        "Theo Brooks",
+        "Gabriel Stone",
+        "Nico Ramirez",
+        "Elias Ward",
+        "Rowan Cole",
+        "Julian Park",
+        "Marcus Bell",
+        "Adrian Fox",
+    ),
+    "Homesteaders": (
+        "Silas Reed",
+        "Emmett Clarke",
+        "Mateo Ortiz",
+        "Jonah Price",
+        "Levi Bennett",
+        "Isaac Monroe",
+        "Samuel Cross",
+        "Henry Dalton",
+        "Wesley Quinn",
+    ),
+}
+
+DEMO_STAFF = {
+    "Roadrunners": (
+        "Owen Mercer", "Caleb Shaw", "Victor Lane", "Felix Grant", "Darius King",
+    ),
+    "Homesteaders": (
+        "Arthur Vaughn", "Lucas Ford", "Everett Nash", "Calvin Rhodes", "Jordan Fields",
+    ),
+}
+
 
 def load_demo_game() -> GeneratedGame:
     """Return a valid Modern Era game without files, network, or generator I/O."""
@@ -47,7 +81,7 @@ def _team(prefix, name, short_name, bt, obt, pitch_die):
         roster.append(
             {
                 "player_id": player_id,
-                "name": f"{name} Player {slot}",
+                "name": DEMO_NAMES[name][slot - 1],
                 "role": "position_player",
                 "positions": [position],
                 "bats": "L" if slot in {1, 3, 6} else "R",
@@ -60,11 +94,12 @@ def _team(prefix, name, short_name, bt, obt, pitch_die):
         lineup.append(
             {"slot": slot, "player_id": player_id, "position": position}
         )
+    starter, reliever, closer, reserve, speedster = DEMO_STAFF[name]
     roster.extend(
         (
             {
                 "player_id": f"{prefix}-sp",
-                "name": f"{name} Starter",
+                "name": starter,
                 "role": "starter",
                 "positions": ["P"],
                 "throws": "R",
@@ -73,7 +108,7 @@ def _team(prefix, name, short_name, bt, obt, pitch_die):
             },
             {
                 "player_id": f"{prefix}-rp1",
-                "name": f"{name} Reliever",
+                "name": reliever,
                 "role": "reliever",
                 "positions": ["P"],
                 "throws": "L",
@@ -82,7 +117,7 @@ def _team(prefix, name, short_name, bt, obt, pitch_die):
             },
             {
                 "player_id": f"{prefix}-rp2",
-                "name": f"{name} Closer",
+                "name": closer,
                 "role": "reliever",
                 "positions": ["P"],
                 "throws": "R",
@@ -91,7 +126,7 @@ def _team(prefix, name, short_name, bt, obt, pitch_die):
             },
             {
                 "player_id": f"{prefix}-bench1",
-                "name": f"{name} Reserve",
+                "name": reserve,
                 "role": "position_player",
                 "positions": ["UT"],
                 "bats": "L",
@@ -102,7 +137,7 @@ def _team(prefix, name, short_name, bt, obt, pitch_die):
             },
             {
                 "player_id": f"{prefix}-bench2",
-                "name": f"{name} Speedster",
+                "name": speedster,
                 "role": "position_player",
                 "positions": ["OF"],
                 "bats": "R",

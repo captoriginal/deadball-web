@@ -20,14 +20,15 @@ and `python -m deadball_play`. It displays the live game situation, derives
 tactical choices from the core, guides roster moves, shows dice and rule traces,
 pauses for paper scorekeeping, and exposes history, Undo, autosave, and resume.
 
-Phase 15 uses a full-screen, three-column laptop layout when standard input and
+The full-screen laptop layout uses a scoreboard header, three content columns,
+and a persistent dice/outcome footer when standard input and
 output are attached to a terminal:
 
 1. current state, results, scoring guidance, and questions;
 2. current legal options in a vertical list;
-3. a field diagram or scrollable complete narration log.
+3. a field diagram, scrollable complete narration log, or box-score lineup.
 
-Press `Tab` to toggle the third column. In narration mode, use Up/Down or Page
+Press `Tab` to cycle the third column. In narration mode, use Up/Down or Page
 Up/Page Down to scroll; `Home` moves to the oldest available text and `End`
 returns to the live bottom. These navigation keys never advance the game.
 
@@ -36,6 +37,15 @@ Install all repository Python packages into the root virtual environment:
 ```console
 ./scripts/install-deadball-play
 ```
+
+Run without arguments for the start screen:
+
+```console
+./scripts/deadball-play
+```
+
+Choosing Web-assisted generation saves JSON, PDF, and session files to their
+default local directories. Deadball Web must already be running.
 
 Try a built-in fictional game immediately:
 

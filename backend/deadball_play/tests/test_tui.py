@@ -25,11 +25,13 @@ from deadball_play.fullscreen import FullscreenApp
 from deadball_play.layout import (
     DashboardView,
     column_widths,
+    compose_modal,
     field_panel,
     narration_panel,
 )
 from deadball_play.tui import (
     TerminalApp,
+    main,
     render_bullpen,
     render_dice,
     render_game_screen,
@@ -109,13 +111,13 @@ def test_three_column_dashboard_separates_state_vertical_options_and_field():
     app = TerminalApp(session)
     view = DashboardView()
 
-    screen = app.dashboard_screen(view, width=160, height=32)
+    screen = app.dashboard_screen(view, width=160, height=42)
     lines = screen.splitlines()
     left_width, middle_width, _ = column_widths(160)
     first_separator = left_width + 1
     second_separator = first_separator + middle_width + 1
 
-    assert len(lines) == 32
+    assert len(lines) == 42
     assert all(len(line) == 160 for line in lines)
     assert "CURRENT STATE" in screen[:first_separator * 32]
     assert any(
@@ -134,6 +136,9 @@ def test_three_column_dashboard_separates_state_vertical_options_and_field():
     assert "Hosts Starter" in screen
     assert "[1B BASE]" in screen
     assert "Runner: Visitors Hitter 2" in screen
+    assert "DICE ROLLS" in screen and "OUTCOME" in screen
+    assert "1  2  3  4  5  6  7  8  9" in screen
+    assert all(line.endswith(("|", "+")) for line in lines)
 
 
 def test_expanded_field_keeps_every_position_and_runner_at_minimum_width():
@@ -180,6 +185,35 @@ def test_narration_column_toggles_scrolls_and_never_changes_game_state():
     assert controller.view.narration_offset == 0
     assert session.state == before
     assert session.history == ()
+
+
+def test_third_column_cycles_field_narration_and_lineups():
+    session = GameSession(initialize_game(load_demo_game()))
+    app = TerminalApp(session)
+    view = DashboardView()
+
+    assert "FIELD" in app.dashboard_screen(view, width=160, height=42)
+    view.toggle()
+    assert "NARRATION" in app.dashboard_screen(view, width=160, height=42)
+    view.toggle()
+    lineups = app.dashboard_screen(view, width=160, height=42)
+    assert "LINEUPS" in lineups
+    assert "Milo Hayes" in lineups and "Silas Reed" in lineups
+    view.toggle()
+    assert view.context_mode == "field"
+
+
+def test_final_modal_is_centered_and_keeps_complete_right_border():
+    modal = compose_modal(
+        ["FINAL BOX SCORE", "RD 3   HM 2", "Winning pitcher: Owen Mercer"],
+        width=120,
+        height=36,
+    )
+
+    lines = modal.splitlines()
+    assert len(lines) == 36
+    assert all(len(line) == 120 for line in lines)
+    assert "FINAL BOX SCORE" in lines[16]
 
 
 def test_narration_viewport_follows_bottom_until_user_scrolls():
@@ -349,6 +383,28 @@ def test_builtin_demo_is_valid_and_ready_offline():
     assert state.source.teams.away.short_name == "RD"
     assert state.source.teams.home.short_name == "HM"
     assert legal_actions(state) == ("swing",)
+    assert state.source.teams.away.roster[0].name == "Milo Hayes"
+    assert state.source.teams.home.roster[0].name == "Silas Reed"
+
+
+def test_game_option_auto_resumes_a_saved_session(tmp_path, monkeypatch):
+    save_path = tmp_path / "misnamed-generated-game.json"
+    session = GameSession(initial_state(), autosave_path=save_path)
+    session.save()
+    observed = {}
+
+    def fake_run(app):
+        observed["game_id"] = app.session.state.source.game.game_id
+        observed["save_path"] = app.session.autosave_path
+        return 0
+
+    monkeypatch.setattr(TerminalApp, "run", fake_run)
+
+    assert main(["--game", str(save_path), "--line-mode"]) == 0
+    assert observed == {
+        "game_id": "mlb-123",
+        "save_path": save_path,
+    }
 
 
 def test_local_web_cache_loads_as_canonical_game_without_writes(tmp_path):

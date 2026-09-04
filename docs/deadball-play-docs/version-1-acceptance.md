@@ -26,8 +26,8 @@ The release checks cover:
 - the installed command and a real full-screen pseudo-terminal session; and
 - the frontend production build.
 
-The final maintained-suite run passed 673 tests: 249 core tests, 280 generator
-tests, 84 play/session/TUI tests, and 60 current backend tests. The Vite
+The final maintained-suite run passed 680 tests: 249 core tests, 280 generator
+tests, 91 play/session/TUI tests, and 60 current backend tests. The Vite
 production build also completed successfully. The complete-game dashboard test
 rendered 148 intermediate screens plus the final state during its 74-action
 seeded game.

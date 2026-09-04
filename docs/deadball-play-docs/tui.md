@@ -102,7 +102,7 @@ Column 2 must remain vertical rather than wrapping actions across rows. Column 1
 owns every prompt; questions should not jump between columns. The scorekeeping
 pause also appears in Column 1 while Columns 2 and 3 remain useful.
 
-Column 3 has two modes:
+Column 3 has three tabbed modes:
 
 - **Field** uses most of the available column height for an expanded diamond.
   It names all nine active defenders at their positions and gives each base a
@@ -110,8 +110,10 @@ Column 3 has two modes:
 - **Narration** shows the complete play-by-play for the current game as a
   vertically scrollable log. New plays follow the bottom automatically unless
   the user has scrolled upward.
+- **Box Score / Lineups** shows both live batting orders with each player's
+  position, plate appearances, hits, and runs.
 
-`Tab` should toggle the third column between Field and Narration. In Narration
+`Tab` cycles Field, Narration, and Box Score / Lineups. In Narration
 mode, arrow keys and Page Up/Page Down should scroll without advancing the
 game. The selected mode and narration scroll position are presentation state;
 they do not belong in the rules engine or saved mechanical game state.
@@ -139,6 +141,23 @@ A representative layout:
 ```
 
 The exact visual design may change, but the information hierarchy should remain stable.
+
+### Scoreboard Header and Play Footer
+
+A full-width header places vertical B/S/O lights and an inning-direction marker
+on the left, a compact base diamond in the center, and inning lines with R/H/E
+on the right. Deadball resolves whole plate appearances rather than individual
+pitches, so ball and strike lights remain unfilled rather than being fabricated.
+Out lights and occupied bases are filled and colored when supported.
+
+A six-line footer remains visible below the three columns. Dice and modifiers
+appear on the left; narration, transition, and paper-scoring guidance appear on
+the right. The footer continues to describe the state-before play until the
+scorekeeping prompt is accepted, even if the mechanical state has moved into
+the next half-inning.
+
+Away and home team names and player names use distinct terminal colors. Color
+is supplementary; labels and layout remain understandable without it.
 
 ---
 

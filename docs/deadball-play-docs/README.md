@@ -182,6 +182,7 @@ Core project documents:
 - [`version-1-integration-review.md`](version-1-integration-review.md) — generator handoff, complete solo-manager control, and MLB-derived release playtest
 - [`generator-hardening-review.md`](generator-hardening-review.md) — full MLB boxscore rosters, non-DH pitcher batting data, and sanitized offline fixtures
 - [`phase-15-review.md`](phase-15-review.md) — laptop-oriented three-column terminal interface and navigation
+- [`phase-16-review.md`](phase-16-review.md) — scoreboard, result footer, context tabs, start screen, and release playtest fixes
 - [`version-1-acceptance.md`](version-1-acceptance.md) — release acceptance evidence and known legacy test exclusions
 - [`generator-backlog.md`](generator-backlog.md) — deferred generator and contract-integration work
 
@@ -242,6 +243,9 @@ Start the bundled demonstration game:
 ```console
 ./scripts/deadball-play --demo --save saves/demo-game.json
 ```
+
+Run `./scripts/deadball-play` without arguments to use the interactive start
+screen.
 
 An interactive terminal uses the three-column interface automatically. Add
 `--line-mode` for redirected input, accessibility tooling, or a compact

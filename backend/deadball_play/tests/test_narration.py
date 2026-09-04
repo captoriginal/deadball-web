@@ -108,7 +108,7 @@ def test_repetition_avoidance_rotates_accurate_templates():
     narrator = Narrator(random.Random(8), recent_window=2)
     outputs = [narrator.render(event, state, state).play_text for _ in range(8)]
 
-    assert len(set(outputs)) == 3
+    assert len(set(outputs)) == 5
     assert all(first != second for first, second in zip(outputs, outputs[1:]))
 
 
@@ -155,6 +155,28 @@ def test_scoring_guidance_is_stable_and_separate_from_varied_prose():
         "Runner: Visitors Hitter 2 -> 3B",
     )
     assert "Score:" not in first.spoken_text
+
+
+def test_double_play_guidance_identifies_the_play_without_inventing_a_relay():
+    before = replace(initial_state(), bases=("away-h2", None, None))
+    after = replace(before, outs=2, bases=(None, None, None))
+    event = play(
+        "double_play",
+        fielded_by="1B",
+        scoring_notation="G-3",
+        outs_added=2,
+        runner_moves=(
+            RunnerMove("away-h2", "1B", out=True),
+            RunnerMove("away-h1", "BATTER", out=True),
+        ),
+    )
+
+    rendered = Narrator(random.Random(2)).render(event, before, after)
+
+    assert rendered.scoring_guidance[0] == (
+        "Score: DP (ground ball initiated by first base)"
+    )
+    assert "3-6-3" not in " ".join(rendered.scoring_guidance)
 
 
 def test_run_scoring_context_only_describes_verified_tie_or_lead():

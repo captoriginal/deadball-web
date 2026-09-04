@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import fields
+from datetime import datetime
+import json
 import random
 from pathlib import Path
 import sys
@@ -37,11 +39,18 @@ from .demo import load_demo_game
 from .layout import (
     DashboardView,
     column_widths,
-    compose_columns,
+    compose_dashboard,
     field_panel,
+    lineups_panel,
     narration_panel,
 )
 from .session import GameSession, HistoryEntry, SessionConfig, SessionError
+from .summary import (
+    TeamBox,
+    build_batting_lines,
+    build_game_box,
+    pitchers_of_record,
+)
 from .web_cache import load_cached_game
 
 
@@ -69,12 +78,14 @@ class TerminalApp:
         input_func: InputFunction = input,
         output: TextIO = sys.stdout,
         clear_screen: bool = False,
+        played_games_dir: str | Path = "played-games",
     ) -> None:
         self.session = session
         self.narrator = narrator or Narrator()
         self.input = input_func
         self.output = output
         self.clear_screen = clear_screen
+        self.played_games_dir = Path(played_games_dir)
         self._narrations: dict[int, NarrationResult] = {}
         self._notice: str | None = None
 
@@ -90,6 +101,7 @@ class TerminalApp:
                     ).strip().upper()
                     if command == "":
                         self.session.confirm_scorekeeping()
+                        self._archive_completed_game()
                     elif command == "?":
                         self._pause(self.rule_screen())
                     elif command == "Y":
@@ -107,7 +119,8 @@ class TerminalApp:
                     continue
 
                 if self.session.state.is_final:
-                    self._show(self.game_screen())
+                    self._archive_completed_game()
+                    self._show("\n".join(self.final_summary_lines()))
                     return 0
 
                 if self._offense_is_computer():
@@ -558,21 +571,103 @@ class TerminalApp:
         middle = self._dashboard_option_lines(view)
         if view.context_mode == "field":
             right = field_panel(self.session.state, right_width)
-        else:
+        elif view.context_mode == "narration":
             right, maximum = narration_panel(
                 self._narration_log(),
                 width=right_width,
-                height=height - 2,
+                height=height - 14,
                 offset=view.narration_offset,
             )
             view.narration_offset = min(view.narration_offset, maximum)
-        return compose_columns(
+        else:
+            right = lineups_panel(
+                self.session.state,
+                right_width,
+                build_batting_lines(self.session.history),
+            )
+        footer_left, footer_right = self._dashboard_footer_lines()
+        return compose_dashboard(
+            self._scoreboard_lines(width),
             left,
             middle,
             right,
+            footer_left,
+            footer_right,
             width=width,
             height=height,
         )
+
+    def _scoreboard_lines(self, width: int) -> list[str]:
+        state = self.session.state
+        box = build_game_box(state, self.session.history)
+        inning_count = min(max(9, state.inning), 12)
+        status = "FINAL" if state.is_final else f"{state.half.upper()} {_ordinal(state.inning)}"
+        first, second, third = (
+            "◆" if runner else "◇" for runner in state.bases
+        )
+        outs = " ".join(
+            "●" if index < state.outs else "○" for index in range(3)
+        )
+        content_width = width - 4
+        headings = "      " + "".join(f"{inning:>3}" for inning in range(1, inning_count + 1))
+        headings += " |  R  H  E"
+        away_line = self._scoreboard_team_line(
+            state.source.teams.away.short_name, box.away, inning_count
+        )
+        home_line = self._scoreboard_team_line(
+            state.source.teams.home.short_name, box.home, inning_count
+        )
+        direction = (
+            "■" if state.is_final else "▲" if state.half == "top" else "▼"
+        )
+        return [
+            _header_spread("    B: ○ ○ ○ ○", second, headings, content_width),
+            _header_spread(
+                f"{state.inning:>2}  S: ○ ○ ○",
+                f"{third}       {first}",
+                away_line,
+                content_width,
+            ),
+            _header_spread(
+                f" {direction}  O: {outs}",
+                status,
+                home_line,
+                content_width,
+            ),
+        ]
+
+    @staticmethod
+    def _scoreboard_team_line(name: str, box: TeamBox, innings: int) -> str:
+        values = [
+            str(box.runs_by_inning[index])
+            if index < len(box.runs_by_inning)
+            and box.runs_by_inning[index] is not None
+            else "-"
+            for index in range(innings)
+        ]
+        return f"{name:<5} " + "".join(f"{value:>3}" for value in values) + (
+            f" | {box.runs:>2} {box.hits:>2} {box.errors:>2}"
+        )
+
+    def _dashboard_footer_lines(self) -> tuple[list[str], list[str]]:
+        if self.session.pending_event is None:
+            return ["DICE ROLLS", "", "Waiting for the next play."], ["OUTCOME"]
+        index = len(self.session.history) - 1
+        entry = self.session.history[index]
+        narration = self._narration_for(index)
+        left = ["DICE ROLLS", *render_dice(entry).splitlines()]
+        right = [
+            f"OUTCOME — {_half_label(entry.state_before).upper()}",
+            narration.play_text,
+        ]
+        if narration.transition_text:
+            right.append(narration.transition_text)
+        right.extend(
+            line
+            for line in narration.scoring_guidance
+            if not line.startswith("Scoreboard:")
+        )
+        return left, right
 
     def _dashboard_state_lines(self) -> list[str]:
         state = self.session.state
@@ -617,14 +712,7 @@ class TerminalApp:
         if self._notice:
             lines.extend(("", "NOTICE", self._notice))
         if self.session.pending_event is not None:
-            entry = self.session.history[-1]
-            narration = self._narration_for(len(self.session.history) - 1)
-            lines.extend(("", "PLAY", render_dice(entry), narration.play_text))
-            if narration.transition_text:
-                lines.append(narration.transition_text)
-            if narration.scoring_guidance:
-                lines.extend(("", "SCORE IT", *narration.scoring_guidance))
-            lines.extend(("", "Press Enter when scored."))
+            lines.extend(("", "Review the outcome below.", "Press Enter when scored."))
         elif state.is_final:
             lines.extend(("", "Game complete. Press Q to exit."))
         elif self._offense_is_computer():
@@ -647,10 +735,47 @@ class TerminalApp:
             options = ["[Y] Detailed history", "[K] Save", "[Q] Exit"]
         else:
             options = _command_options(self.session.state, self.session)
-        options.extend(("", "[Tab] Toggle field/log"))
+        options.extend(("", "[Tab] Field / narration / lineups"))
         if view.context_mode == "narration":
             options.extend(("[Up/Down] Scroll", "[PgUp/PgDn] Page"))
         return ["CURRENT OPTIONS", "", *options]
+
+    def final_summary_lines(self) -> list[str]:
+        state = self.session.state
+        box = build_game_box(state, self.session.history)
+        winner, loser = pitchers_of_record(state, self.session.history)
+        innings = max(len(box.away.runs_by_inning), len(box.home.runs_by_inning))
+        headings = "      " + "".join(f"{item:>3}" for item in range(1, innings + 1))
+        headings += " |  R  H  E"
+        return [
+            "FINAL BOX SCORE",
+            "",
+            headings,
+            self._scoreboard_team_line(state.source.teams.away.short_name, box.away, innings),
+            self._scoreboard_team_line(state.source.teams.home.short_name, box.home, innings),
+            "",
+            f"Winning pitcher: {winner}",
+            f"Losing pitcher:  {loser}",
+            "",
+            "[Y] Detailed history   [K] Save   [Q] Exit",
+        ]
+
+    def _archive_completed_game(self) -> Path | None:
+        if not self.session.state.is_final or self.session.pending_event is not None:
+            return None
+        if getattr(self, "_played_game_path", None) is not None:
+            return self._played_game_path
+        state = self.session.state
+        game = state.source.game
+        away = _filename_part(state.source.teams.away.name)
+        home = _filename_part(state.source.teams.home.name)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        path = self.played_games_dir / (
+            f"{game.game_date}-{away}-at-{home}-{stamp}.json"
+        )
+        self._played_game_path = self.session.save(path)
+        self._notice = f"Final game saved to {self._played_game_path}."
+        return self._played_game_path
 
     def _narration_log(self) -> list[str]:
         if not self.session.history:
@@ -678,7 +803,7 @@ class TerminalApp:
     def _consume_notice(self) -> str:
         notice = self._notice or ""
         self._notice = None
-        return notice
+        return _wrap(notice)
 
     def _write(self, text: str) -> None:
         self.output.write(text.rstrip() + "\n")
@@ -959,12 +1084,31 @@ def _ordinal(number: int) -> str:
     return f"{number}{suffix}"
 
 
+def _filename_part(value: str) -> str:
+    cleaned = "".join(character for character in value if character.isalnum())
+    return cleaned or "Team"
+
+
+def _header_spread(left: str, center: str, right: str, width: int) -> str:
+    """Place three scoreboard groups without losing stable alignment."""
+    row = [" "] * width
+    placements = (
+        (0, left),
+        (max(0, (width - len(center)) // 2), center),
+        (max(0, width - len(right)), right),
+    )
+    for start, value in placements:
+        for offset, character in enumerate(value[: width - start]):
+            row[start + offset] = character
+    return "".join(row)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="deadball-play",
         description="Play a generated Deadball game in the terminal.",
     )
-    source = parser.add_mutually_exclusive_group(required=True)
+    source = parser.add_mutually_exclusive_group(required=False)
     source.add_argument("--game", type=Path, help="generated game JSON")
     source.add_argument("--resume", type=Path, help="saved session JSON")
     source.add_argument(
@@ -974,6 +1118,16 @@ def _parser() -> argparse.ArgumentParser:
         "--cached-game",
         metavar="MLB_GAME_ID",
         help="start a generated game from the local Deadball Web database",
+    )
+    source.add_argument(
+        "--generate-game",
+        metavar="MLB_GAME_ID",
+        help="generate through a running Deadball Web server and start the game",
+    )
+    parser.add_argument(
+        "--web-base-url",
+        default="http://127.0.0.1:8000/api",
+        help="Deadball Web API used by --generate-game",
     )
     parser.add_argument(
         "--database",
@@ -1010,9 +1164,25 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if not arguments:
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            arguments = ["--help"]
+        else:
+            from .startup import startup_arguments
+
+            selected = startup_arguments()
+            if selected is None:
+                return 0
+            arguments = selected
     parser = _parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(arguments)
+    if not any(
+        (args.game, args.resume, args.demo, args.cached_game, args.generate_game)
+    ):
+        parser.error("choose a game source or run without arguments for the start screen")
     try:
+        session = None
         if args.resume:
             session = GameSession.load(args.resume)
         else:
@@ -1020,6 +1190,20 @@ def main(argv: list[str] | None = None) -> int:
                 game = load_demo_game()
             elif args.cached_game:
                 game = load_cached_game(args.cached_game, args.database)
+            elif args.generate_game:
+                from .startup import generate_web_artifacts
+
+                artifacts = generate_web_artifacts(
+                    args.generate_game,
+                    base_url=args.web_base_url,
+                )
+                game = load_generated_game(
+                    artifacts.game_path.read_text(encoding="utf-8")
+                )
+                if args.save is None:
+                    args.save = artifacts.save_path
+                print(f"Game JSON: {artifacts.game_path}")
+                print(f"Score sheet: {artifacts.scorecard_path}")
             else:
                 try:
                     game_text = args.game.read_text(encoding="utf-8")
@@ -1028,32 +1212,37 @@ def main(argv: list[str] | None = None) -> int:
                         f"game file not found: {args.game}. "
                         "Use --demo to start without a generated file."
                     ) from exc
-                game = load_generated_game(game_text)
-            if args.export_game:
-                args.export_game.parent.mkdir(parents=True, exist_ok=True)
-                args.export_game.write_text(
-                    game.to_json(indent=2) + "\n", encoding="utf-8"
+                document = json.loads(game_text)
+                if isinstance(document, dict) and "save_format_version" in document:
+                    session = GameSession.load(args.game)
+                else:
+                    game = load_generated_game(document)
+            if session is None:
+                if args.export_game:
+                    args.export_game.parent.mkdir(parents=True, exist_ok=True)
+                    args.export_game.write_text(
+                        game.to_json(indent=2) + "\n", encoding="utf-8"
+                    )
+                config = SessionConfig(
+                    away_control=args.away_control,
+                    home_control=args.home_control,
+                    away_daring=args.away_daring,
+                    home_daring=args.home_daring,
                 )
-            config = SessionConfig(
-                away_control=args.away_control,
-                home_control=args.home_control,
-                away_daring=args.away_daring,
-                home_daring=args.home_daring,
-            )
-            rng = (
-                RandomDice(random.Random(args.seed))
-                if args.seed is not None
-                else None
-            )
-            session = GameSession(
-                initialize_game(game),
-                rng=rng,
-                config=config,
-                autosave_path=args.save,
-            )
-            if args.save:
-                session.save()
-    except (OSError, ValueError) as exc:
+                rng = (
+                    RandomDice(random.Random(args.seed))
+                    if args.seed is not None
+                    else None
+                )
+                session = GameSession(
+                    initialize_game(game),
+                    rng=rng,
+                    config=config,
+                    autosave_path=args.save,
+                )
+                if args.save:
+                    session.save()
+    except (json.JSONDecodeError, OSError, ValueError) as exc:
         parser.error(str(exc))
     use_fullscreen = (
         sys.stdin.isatty()

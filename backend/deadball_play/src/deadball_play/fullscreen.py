@@ -6,7 +6,7 @@ import curses
 from pathlib import Path
 import textwrap
 
-from .layout import DashboardView, MIN_COLUMNS, MIN_ROWS
+from .layout import DashboardView, MIN_COLUMNS, MIN_ROWS, compose_modal
 from .narration import Narrator
 from .session import GameSession, SessionError
 from .tui import TerminalApp
@@ -26,15 +26,19 @@ class FullscreenApp(TerminalApp):
         self.screen = screen
         self.view = DashboardView()
         self._dialog: list[str] | None = None
+        self._team_colors: list[tuple[tuple[str, ...], int]] = []
 
     def run(self) -> int:
         self.screen.keypad(True)
+        self._init_colors()
         try:
             curses.curs_set(0)
         except curses.error:
             pass
         while True:
             try:
+                if self.session.state.is_final and self.session.pending_event is None:
+                    self._archive_completed_game()
                 if (
                     self.session.pending_event is None
                     and not self.session.state.is_final
@@ -59,6 +63,7 @@ class FullscreenApp(TerminalApp):
                 if self.session.pending_event is not None:
                     if key in ("\n", "\r", curses.KEY_ENTER):
                         self.session.confirm_scorekeeping()
+                        self._archive_completed_game()
                         self._notice = None
                     elif _letter(key) == "?":
                         self._pause(self.rule_screen())
@@ -116,17 +121,95 @@ class FullscreenApp(TerminalApp):
             )
             lines = textwrap.wrap(message, max(20, width - 2))
         else:
-            lines = self.dashboard_screen(
-                self.view,
-                width=width,
-                height=height,
-            ).splitlines()
+            if self.session.state.is_final and self.session.pending_event is None:
+                lines = compose_modal(
+                    self.final_summary_lines(), width=width, height=height
+                ).splitlines()
+            else:
+                lines = self.dashboard_screen(
+                    self.view,
+                    width=width,
+                    height=height,
+                ).splitlines()
         for row, line in enumerate(lines[:height]):
             try:
-                self.screen.addnstr(row, 0, line, max(0, width - 1))
+                limit = width - 1 if row == height - 1 else width
+                self.screen.addnstr(row, 0, line, max(0, limit))
+                self._add_team_colors(row, line, limit)
+                self._add_scoreboard_colors(row, line, limit)
             except curses.error:
                 pass
         self.screen.refresh()
+
+    def _init_colors(self) -> None:
+        if not curses.has_colors():
+            return
+        try:
+            curses.start_color()
+            curses.use_default_colors()
+            curses.init_pair(1, curses.COLOR_CYAN, -1)
+            curses.init_pair(2, curses.COLOR_YELLOW, -1)
+            curses.init_pair(3, curses.COLOR_GREEN, -1)
+            curses.init_pair(4, curses.COLOR_RED, -1)
+        except curses.error:
+            return
+        source = self.session.state.source
+        self._team_colors = [
+            (_team_color_tokens(source.teams.away), curses.color_pair(1) | curses.A_BOLD),
+            (_team_color_tokens(source.teams.home), curses.color_pair(2) | curses.A_BOLD),
+        ]
+
+    def _add_team_colors(self, row: int, line: str, limit: int) -> None:
+        for tokens, attribute in self._team_colors:
+            for token in tokens:
+                start = 0
+                while True:
+                    start = line.find(token, start, limit)
+                    if start < 0:
+                        break
+                    end = start + len(token)
+                    before_ok = start == 0 or not line[start - 1].isalnum()
+                    after_ok = end >= len(line) or not line[end].isalnum()
+                    if before_ok and after_ok:
+                        try:
+                            self.screen.addnstr(
+                                row, start, token, min(len(token), limit - start), attribute
+                            )
+                        except curses.error:
+                            pass
+                    start = end
+
+    def _add_scoreboard_colors(self, row: int, line: str, limit: int) -> None:
+        if not self._team_colors:
+            return
+        for label, pair in (("B:", 3), ("S:", 4), ("O:", 4)):
+            start = line.find(label)
+            if start < 0:
+                continue
+            separator = line.find("|", start)
+            end = min(limit, separator if separator >= 0 else limit)
+            for column in range(start + len(label), end):
+                if line[column] in {"●", "○"}:
+                    try:
+                        self.screen.addstr(
+                            row,
+                            column,
+                            line[column],
+                            curses.color_pair(pair) | curses.A_BOLD,
+                        )
+                    except curses.error:
+                        pass
+        for column, character in enumerate(line[:limit]):
+            if character == "◆":
+                try:
+                    self.screen.addstr(
+                        row,
+                        column,
+                        character,
+                        curses.color_pair(2) | curses.A_BOLD,
+                    )
+                except curses.error:
+                    pass
 
     def _dashboard_state_lines(self) -> list[str]:
         if self._dialog is not None:
@@ -242,3 +325,14 @@ def run_fullscreen(session: GameSession, narrator: Narrator | None = None) -> in
 
 def _letter(key) -> str:
     return key.upper() if isinstance(key, str) and len(key) == 1 else ""
+
+
+def _team_color_tokens(team) -> tuple[str, ...]:
+    values = {team.name, team.name.upper(), team.short_name}
+    for player in team.roster:
+        values.update((player.name, player.name.upper()))
+        parts = player.name.split()
+        if len(parts) > 1:
+            short = f"{parts[0][0]}. {parts[-1]}"
+            values.update((short, short.upper()))
+    return tuple(sorted(values, key=len, reverse=True))

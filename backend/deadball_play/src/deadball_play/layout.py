@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import textwrap
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from deadball_core import GameState
 
 
 MIN_COLUMNS = 120
-MIN_ROWS = 24
+MIN_ROWS = 36
+CONTEXT_MODES = ("field", "narration", "lineups")
 
 
 @dataclass
@@ -21,9 +22,8 @@ class DashboardView:
     narration_offset: int = 0
 
     def toggle(self) -> None:
-        self.context_mode = (
-            "narration" if self.context_mode == "field" else "field"
-        )
+        index = CONTEXT_MODES.index(self.context_mode)
+        self.context_mode = CONTEXT_MODES[(index + 1) % len(CONTEXT_MODES)]
         self.narration_offset = 0
 
     def scroll_up(self, amount: int = 1) -> None:
@@ -72,6 +72,72 @@ def compose_columns(
         rows.append("|" + "|".join(cells) + "|")
     rows.append(border)
     return "\n".join(rows)
+
+
+def compose_dashboard(
+    header: Iterable[str],
+    left: Iterable[str],
+    middle: Iterable[str],
+    right: Iterable[str],
+    footer_left: Iterable[str],
+    footer_right: Iterable[str],
+    *,
+    width: int,
+    height: int,
+) -> str:
+    """Compose a scoreboard, three-column body, and six-line result footer."""
+    if height < MIN_ROWS:
+        raise ValueError(f"terminal must be at least {MIN_ROWS} rows high")
+    widths = column_widths(width)
+    header_height = 3
+    footer_height = 6
+    body_height = height - header_height - footer_height - 4
+    border = "+" + "-" * (width - 2) + "+"
+    column_border = "+" + "+".join("-" * item for item in widths) + "+"
+    rows = [border]
+    rows.extend(_full_width_rows(header, width - 2, header_height))
+    rows.append(column_border)
+    panels = [
+        _panel_lines(lines, panel_width)
+        for lines, panel_width in zip((left, middle, right), widths)
+    ]
+    for index in range(body_height):
+        cells = [
+            panel[index] if index < len(panel) else " " * panel_width
+            for panel, panel_width in zip(panels, widths)
+        ]
+        rows.append("|" + "|".join(cells) + "|")
+    footer_widths = ((width - 3) // 2, width - 3 - (width - 3) // 2)
+    rows.append("+" + "+".join("-" * item for item in footer_widths) + "+")
+    footer_panels = [
+        _panel_lines(lines, panel_width)
+        for lines, panel_width in zip((footer_left, footer_right), footer_widths)
+    ]
+    for index in range(footer_height):
+        cells = [
+            panel[index] if index < len(panel) else " " * panel_width
+            for panel, panel_width in zip(footer_panels, footer_widths)
+        ]
+        rows.append("|" + "|".join(cells) + "|")
+    rows.append(border)
+    return "\n".join(rows)
+
+
+def compose_modal(lines: Iterable[str], *, width: int, height: int) -> str:
+    """Center a bordered information box within an exact-sized screen."""
+    content = list(lines)
+    box_width = min(width - 4, max(64, *(len(line) + 4 for line in content)))
+    box_height = len(content) + 2
+    top = max(0, (height - box_height) // 2)
+    left = max(0, (width - box_width) // 2)
+    canvas = [list(" " * width) for _ in range(height)]
+    border = "+" + "-" * (box_width - 2) + "+"
+    for row, text in enumerate([border, *content, border]):
+        rendered = border if row in {0, box_height - 1} else (
+            "| " + text[: box_width - 4].ljust(box_width - 4) + " |"
+        )
+        canvas[top + row][left:left + box_width] = rendered
+    return "\n".join("".join(row) for row in canvas)
 
 
 def field_panel(state: GameState, width: int) -> list[str]:
@@ -156,7 +222,7 @@ def narration_panel(
     offset: int,
 ) -> tuple[list[str], int]:
     """Return a bottom-following, vertically scrollable narration viewport."""
-    header = ["NARRATION                [Tab: Field]", ""]
+    header = ["NARRATION              [Tab: Lineups]", ""]
     lines = []
     for item in narration:
         lines.extend(textwrap.wrap(item, width=max(10, width - 2)) or [""])
@@ -176,6 +242,38 @@ def narration_panel(
     return [*header, *visible], max_offset
 
 
+def lineups_panel(
+    state: GameState,
+    width: int,
+    batting: Mapping[str, object] | None = None,
+) -> list[str]:
+    """Render both live batting orders with compact box-score statistics."""
+    content_width = max(1, width - 2)
+    batting = batting or {}
+    lines = [_ends("BOX SCORE / LINEUPS", "[Tab: Field]", content_width)]
+    for side in ("away", "home"):
+        team_state = getattr(state, side)
+        team = getattr(state.source.teams, side)
+        defense = {
+            assignment.player_id: assignment.position
+            for assignment in team_state.active_defense
+        }
+        lines.extend(("", _ends(team.name.upper(), "PA  H  R", content_width)))
+        for index, player_id in enumerate(team_state.lineup):
+            player = team.player(player_id)
+            position = defense.get(player_id, player.positions[0])
+            marker = ">" if index == team_state.batting_order_index else " "
+            stats = batting.get(player_id)
+            pa = getattr(stats, "plate_appearances", 0)
+            hits = getattr(stats, "hits", 0)
+            runs = getattr(stats, "runs", 0)
+            prefix = f"{marker}{index + 1}. {position:<2} "
+            suffix = f" {pa:>2} {hits:>2} {runs:>2}"
+            name = _short_name(player.name, content_width - len(prefix) - len(suffix))
+            lines.append(prefix + name.ljust(content_width - len(prefix) - len(suffix)) + suffix)
+    return lines
+
+
 def _panel_lines(lines: Iterable[str], width: int) -> list[str]:
     result = []
     for line in lines:
@@ -193,6 +291,16 @@ def _panel_lines(lines: Iterable[str], width: int) -> list[str]:
         ) or [""]
         result.extend(f" {item:<{width - 1}}"[:width] for item in wrapped)
     return result
+
+
+def _full_width_rows(
+    lines: Iterable[str], width: int, height: int
+) -> list[str]:
+    panel = _panel_lines(lines, width)
+    return [
+        "|" + (panel[index] if index < len(panel) else " " * width) + "|"
+        for index in range(height)
+    ]
 
 
 def _center(text: str, width: int) -> str:
