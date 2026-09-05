@@ -49,6 +49,7 @@ from .summary import (
     TeamBox,
     build_batting_lines,
     build_game_box,
+    build_pitching_lines,
     pitchers_of_record,
 )
 from .web_cache import load_cached_game
@@ -88,9 +89,18 @@ class TerminalApp:
         self.played_games_dir = Path(played_games_dir)
         self._narrations: dict[int, NarrationResult] = {}
         self._notice: str | None = None
+        self._intro_pending = not session.history
 
     def run(self) -> int:
         """Run until the game ends or the user saves and quits."""
+        if self._intro_pending:
+            try:
+                self._show(self.intro_screen())
+                self.input("Press Enter to begin. ")
+            except (EOFError, KeyboardInterrupt):
+                self._write("\nInput ended. The current autosave has been preserved.")
+                return 130
+            self._intro_pending = False
         while True:
             try:
                 if self.session.pending_event is not None:
@@ -123,12 +133,18 @@ class TerminalApp:
                     self._show("\n".join(self.final_summary_lines()))
                     return 0
 
-                if self._offense_is_computer():
+                self._show(self.game_screen())
+                prompt = (
+                    "Enter/S=continue computer; choose a defensive option: "
+                    if self._offense_is_computer()
+                    else "Choose an action: "
+                )
+                command = self.input(prompt).strip().upper()
+                if self._offense_is_computer() and command in {"", "S"}:
                     self._perform_computer_action()
                     continue
-
-                self._show(self.game_screen())
-                command = self.input("Choose an action: ").strip().upper()
+                if not self._offense_is_computer() and command == "":
+                    command = "S"
                 if self._handle_ready_command(command):
                     return 0
             except (EOFError, KeyboardInterrupt):
@@ -151,8 +167,19 @@ class TerminalApp:
         sections.append("Press Enter when scored.")
         return "\n\n".join(section for section in sections if section)
 
+    def intro_screen(self) -> str:
+        state = self.session.state
+        away = state.source.teams.away.name
+        home = state.source.teams.home.name
+        return (
+            "DEADBALL PLAY\n\n"
+            f"Welcome to {away} at {home}.\n"
+            "The clubs are set, the field is ready, and the first pitch awaits.\n\n"
+            "Press Enter to begin."
+        )
+
     def game_screen(self) -> str:
-        screen = render_game_screen(self.session.state, self.session)
+        screen = render_game_screen(self._presentation_state(), self.session)
         if not self.session.history:
             return screen
         lines = ["RECENT PLAYS"]
@@ -567,41 +594,41 @@ class TerminalApp:
     ) -> str:
         """Render the full-screen three-column laptop dashboard."""
         _, _, right_width = column_widths(width)
+        state = self._presentation_state()
+        history = self._confirmed_history()
         left = self._dashboard_state_lines()
         middle = self._dashboard_option_lines(view)
         if view.context_mode == "field":
-            right = field_panel(self.session.state, right_width)
+            right = field_panel(state, right_width)
         elif view.context_mode == "narration":
             right, maximum = narration_panel(
                 self._narration_log(),
                 width=right_width,
-                height=height - 14,
+                height=height - 19,
                 offset=view.narration_offset,
             )
             view.narration_offset = min(view.narration_offset, maximum)
         else:
             right = lineups_panel(
-                self.session.state,
+                state,
                 right_width,
-                build_batting_lines(self.session.history),
+                build_batting_lines(history),
+                build_pitching_lines(history),
             )
-        footer_left, footer_right = self._dashboard_footer_lines()
         return compose_dashboard(
             self._scoreboard_lines(width),
+            self._dashboard_outcome_lines(width),
             left,
             middle,
             right,
-            footer_left,
-            footer_right,
             width=width,
             height=height,
         )
 
     def _scoreboard_lines(self, width: int) -> list[str]:
-        state = self.session.state
-        box = build_game_box(state, self.session.history)
+        state = self._presentation_state()
+        box = build_game_box(state, self._confirmed_history())
         inning_count = min(max(9, state.inning), 12)
-        status = "FINAL" if state.is_final else f"{state.half.upper()} {_ordinal(state.inning)}"
         first, second, third = (
             "◆" if runner else "◇" for runner in state.bases
         )
@@ -609,35 +636,58 @@ class TerminalApp:
             "●" if index < state.outs else "○" for index in range(3)
         )
         content_width = width - 4
-        headings = "      " + "".join(f"{inning:>3}" for inning in range(1, inning_count + 1))
+        name_width = max(
+            len(state.source.teams.away.name),
+            len(state.source.teams.home.name),
+        )
+        headings = " " * (name_width + 1) + "".join(
+            f"{inning:>3}" for inning in range(1, inning_count + 1)
+        )
         headings += " |  R  H  E"
         away_line = self._scoreboard_team_line(
-            state.source.teams.away.short_name, box.away, inning_count
+            state.source.teams.away.name,
+            box.away,
+            inning_count,
+            name_width=name_width,
         )
         home_line = self._scoreboard_team_line(
-            state.source.teams.home.short_name, box.home, inning_count
+            state.source.teams.home.name,
+            box.home,
+            inning_count,
+            name_width=name_width,
         )
-        direction = (
-            "■" if state.is_final else "▲" if state.half == "top" else "▼"
+        top_arrow = "■" if state.is_final else "▲" if state.half == "top" else " "
+        bottom_arrow = "▼" if not state.is_final and state.half == "bottom" else " "
+        inning_stack = (
+            f"{top_arrow:^3}",
+            f"{state.inning:^3}",
+            f"{bottom_arrow:^3}",
         )
+        left_rows = (
+            f"{inning_stack[0]}  B: ○ ○ ○ ○",
+            f"{inning_stack[1]}  S: ○ ○ ○",
+            f"{inning_stack[2]}  O: {outs}",
+        )
+        center_rows = (second, f"{third}       {first}", "")
+        right_rows = (headings, away_line, home_line)
         return [
-            _header_spread("    B: ○ ○ ○ ○", second, headings, content_width),
-            _header_spread(
-                f"{state.inning:>2}  S: ○ ○ ○",
-                f"{third}       {first}",
-                away_line,
+            _header_cluster(
+                left_rows[index],
+                center_rows[index],
+                right_rows[index],
                 content_width,
-            ),
-            _header_spread(
-                f" {direction}  O: {outs}",
-                status,
-                home_line,
-                content_width,
-            ),
+            )
+            for index in range(3)
         ]
 
     @staticmethod
-    def _scoreboard_team_line(name: str, box: TeamBox, innings: int) -> str:
+    def _scoreboard_team_line(
+        name: str,
+        box: TeamBox,
+        innings: int,
+        *,
+        name_width: int = 5,
+    ) -> str:
         values = [
             str(box.runs_by_inning[index])
             if index < len(box.runs_by_inning)
@@ -645,32 +695,51 @@ class TerminalApp:
             else "-"
             for index in range(innings)
         ]
-        return f"{name:<5} " + "".join(f"{value:>3}" for value in values) + (
-            f" | {box.runs:>2} {box.hits:>2} {box.errors:>2}"
+        return (
+            f"{name:<{name_width}} "
+            + "".join(f"{value:>3}" for value in values)
+            + f" | {box.runs:>2} {box.hits:>2} {box.errors:>2}"
         )
 
-    def _dashboard_footer_lines(self) -> tuple[list[str], list[str]]:
+    def _dashboard_outcome_lines(self, width: int) -> list[str]:
         if self.session.pending_event is None:
-            return ["DICE ROLLS", "", "Waiting for the next play."], ["OUTCOME"]
+            lines = [""]
+            if self._notice:
+                lines.extend((f"MANAGER NOTICE: {self._notice}", ""))
+            lines.append(
+                "Computer offense is paused for your defensive decision. "
+                "Press Enter or S to continue."
+                if self._offense_is_computer() and not self.session.state.is_final
+                else "Waiting for the next play."
+            )
+            return lines
         index = len(self.session.history) - 1
         entry = self.session.history[index]
         narration = self._narration_for(index)
-        left = ["DICE ROLLS", *render_dice(entry).splitlines()]
-        right = [
-            f"OUTCOME — {_half_label(entry.state_before).upper()}",
-            narration.play_text,
+        lines = [
+            _half_label(entry.state_before).upper(),
+            "",
         ]
+        if self._notice:
+            lines[0] += f" | MANAGER NOTICE: {self._notice}"
+        lines.extend((render_dice(entry).replace("\n", " "), ""))
+        prose = narration.play_text
         if narration.transition_text:
-            right.append(narration.transition_text)
-        right.extend(
-            line
-            for line in narration.scoring_guidance
-            if not line.startswith("Scoreboard:")
+            prose += " " + narration.transition_text
+        lines.extend(_narration_box(prose, width=max(40, width - 8)))
+        lines.append("")
+        lines.append(
+            " | ".join(
+                line
+                for line in narration.scoring_guidance
+                if not line.startswith("Scoreboard:")
+            )
         )
-        return left, right
+        lines.append("Press Enter when scored.")
+        return lines
 
     def _dashboard_state_lines(self) -> list[str]:
-        state = self.session.state
+        state = self._presentation_state()
         away = state.source.teams.away
         home = state.source.teams.home
         status = (
@@ -709,15 +778,9 @@ class TerminalApp:
                     f"{_traits(pitcher.traits)}",
                 )
             )
-        if self._notice:
-            lines.extend(("", "NOTICE", self._notice))
-        if self.session.pending_event is not None:
-            lines.extend(("", "Review the outcome below.", "Press Enter when scored."))
-        elif state.is_final:
+        if state.is_final:
             lines.extend(("", "Game complete. Press Q to exit."))
-        elif self._offense_is_computer():
-            lines.extend(("", "Computer manager is deciding..."))
-        else:
+        elif self.session.pending_event is None and not self._offense_is_computer():
             lines.extend(("", "What do you want to do?"))
         return lines
 
@@ -733,6 +796,24 @@ class TerminalApp:
             ]
         elif self.session.state.is_final:
             options = ["[Y] Detailed history", "[K] Save", "[Q] Exit"]
+        elif self._offense_is_computer():
+            options = ["[Enter/S] Continue computer"]
+            defense = self._defense_team_state()
+            if defense.bullpen:
+                options.append("[M] Mound change")
+            if defense.bench:
+                options.append("[D] Defensive sub")
+            options.extend(
+                (
+                    "[X] Position switch",
+                    "[L] Lineups",
+                    "[V] Pitchers",
+                    "[Y] History",
+                    "[?] Rule",
+                    "[K] Save",
+                    "[Q] Save & quit",
+                )
+            )
         else:
             options = _command_options(self.session.state, self.session)
         options.extend(("", "[Tab] Field / narration / lineups"))
@@ -788,6 +869,16 @@ class TerminalApp:
                 f"{self._narration_for(index).play_text}{marker}"
             )
         return lines
+
+    def _presentation_state(self) -> GameState:
+        if self.session.pending_event is not None:
+            return self.session.history[-1].state_before
+        return self.session.state
+
+    def _confirmed_history(self) -> tuple[HistoryEntry, ...]:
+        if self.session.pending_event is not None:
+            return self.session.history[:-1]
+        return self.session.history
 
     def _show(self, text: str) -> None:
         if self.clear_screen:
@@ -1076,6 +1167,21 @@ def _wrap(text: str) -> str:
     return textwrap.fill(text, width=88, break_long_words=False)
 
 
+def _narration_box(text: str, *, width: int) -> list[str]:
+    """Render one narration line with one row and three columns of padding."""
+    text_width = max(1, width - 8)
+    narration = textwrap.shorten(text, width=text_width, placeholder="…")
+    box_width = min(width, len(narration) + 8)
+    horizontal_padding = " " * 3
+    return [
+        "┌" + "─" * (box_width - 2) + "┐",
+        "│" + " " * (box_width - 2) + "│",
+        "│" + horizontal_padding + narration + horizontal_padding + "│",
+        "│" + " " * (box_width - 2) + "│",
+        "└" + "─" * (box_width - 2) + "┘",
+    ]
+
+
 def _ordinal(number: int) -> str:
     if 10 <= number % 100 <= 20:
         suffix = "th"
@@ -1089,18 +1195,22 @@ def _filename_part(value: str) -> str:
     return cleaned or "Team"
 
 
-def _header_spread(left: str, center: str, right: str, width: int) -> str:
-    """Place three scoreboard groups without losing stable alignment."""
-    row = [" "] * width
-    placements = (
-        (0, left),
-        (max(0, (width - len(center)) // 2), center),
-        (max(0, width - len(right)), right),
+def _header_cluster(left: str, center: str, right: str, width: int) -> str:
+    """Keep all scoreboard groups together around the center of the screen."""
+    left_width = 18
+    center_width = 11
+    right_width = max(45, len(right))
+    group = (
+        left[:left_width].ljust(left_width)
+        + " " * 5
+        + center[:center_width].center(center_width)
+        + " " * 5
+        + right[:right_width].rjust(right_width)
     )
-    for start, value in placements:
-        for offset, character in enumerate(value[: width - start]):
-            row[start + offset] = character
-    return "".join(row)
+    group = group[:width]
+    available = max(0, width - len(group))
+    left_padding = min(available, available // 2 + 2)
+    return " " * left_padding + group + " " * (available - left_padding)
 
 
 def _parser() -> argparse.ArgumentParser:

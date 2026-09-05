@@ -183,6 +183,7 @@ Core project documents:
 - [`generator-hardening-review.md`](generator-hardening-review.md) — full MLB boxscore rosters, non-DH pitcher batting data, and sanitized offline fixtures
 - [`phase-15-review.md`](phase-15-review.md) — laptop-oriented three-column terminal interface and navigation
 - [`phase-16-review.md`](phase-16-review.md) — scoreboard, result footer, context tabs, start screen, and release playtest fixes
+- [`phase-17-review.md`](phase-17-review.md) — centered outcome flow, computer-turn controls, expanded box stats, and narration/rules refinements
 - [`version-1-acceptance.md`](version-1-acceptance.md) — release acceptance evidence and known legacy test exclusions
 - [`generator-backlog.md`](generator-backlog.md) — deferred generator and contract-integration work
 

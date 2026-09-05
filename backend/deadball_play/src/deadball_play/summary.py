@@ -29,35 +29,104 @@ class GameBox:
 @dataclass(frozen=True)
 class BattingLine:
     plate_appearances: int = 0
+    at_bats: int = 0
     hits: int = 0
     runs: int = 0
+    rbi: int = 0
+    walks: int = 0
+    strikeouts: int = 0
+
+
+@dataclass(frozen=True)
+class PitchingLine:
+    outs: int = 0
+    hits: int = 0
+    runs: int = 0
+    walks: int = 0
+    strikeouts: int = 0
+
+    @property
+    def innings_pitched(self) -> str:
+        return f"{self.outs // 3}.{self.outs % 3}"
 
 
 def build_batting_lines(
     history: tuple[HistoryEntry, ...],
 ) -> dict[str, BattingLine]:
-    """Derive compact PA/H/R lines for the lineup tab."""
+    """Derive standard batter lines from confirmed structured play history."""
     totals: dict[str, BattingLine] = {}
     for entry in history:
         event = entry.event
         if isinstance(event, PlayEvent):
             previous = totals.get(event.batter_id, BattingLine())
+            walk = event.event_type == "walk" or event.classification == "walk"
+            sacrifice = event.event_type == "sacrifice_bunt"
+            hit = (
+                event.hit_type is not None
+                and event.defense_outcome not in {"out", "error"}
+            )
             totals[event.batter_id] = BattingLine(
-                previous.plate_appearances + 1,
-                previous.hits + int(
-                    event.hit_type is not None
-                    and event.defense_outcome not in {"out", "error"}
+                plate_appearances=previous.plate_appearances + 1,
+                at_bats=previous.at_bats + int(not walk and not sacrifice),
+                hits=previous.hits + int(hit),
+                runs=previous.runs,
+                rbi=previous.rbi + (
+                    0 if event.event_type == "error" else event.runs_scored
                 ),
-                previous.runs,
+                walks=previous.walks + int(walk),
+                strikeouts=previous.strikeouts + int(event.event_type == "strikeout"),
             )
         for move in getattr(event, "runner_moves", ()):
             if move.scored:
                 previous = totals.get(move.runner_id, BattingLine())
                 totals[move.runner_id] = BattingLine(
-                    previous.plate_appearances,
-                    previous.hits,
-                    previous.runs + 1,
+                    plate_appearances=previous.plate_appearances,
+                    at_bats=previous.at_bats,
+                    hits=previous.hits,
+                    runs=previous.runs + 1,
+                    rbi=previous.rbi,
+                    walks=previous.walks,
+                    strikeouts=previous.strikeouts,
                 )
+    return totals
+
+
+def build_pitching_lines(
+    history: tuple[HistoryEntry, ...],
+) -> dict[str, PitchingLine]:
+    """Derive IP/H/R/BB/K pitcher lines from confirmed structured history."""
+    totals: dict[str, PitchingLine] = {}
+    for entry in history:
+        event = entry.event
+        if isinstance(event, PlayEvent):
+            pitcher_id = event.pitcher_id
+        elif isinstance(event, StealEvent):
+            defense = (
+                entry.state_before.home
+                if entry.state_before.half == "top"
+                else entry.state_before.away
+            )
+            pitcher_id = defense.active_pitcher_id
+        else:
+            continue
+        if pitcher_id is None:
+            continue
+        previous = totals.get(pitcher_id, PitchingLine())
+        hit = isinstance(event, PlayEvent) and (
+            event.hit_type is not None
+            and event.defense_outcome not in {"out", "error"}
+        )
+        walk = isinstance(event, PlayEvent) and (
+            event.event_type == "walk" or event.classification == "walk"
+        )
+        strikeout = isinstance(event, PlayEvent) and event.event_type == "strikeout"
+        totals[pitcher_id] = PitchingLine(
+            outs=previous.outs + event.outs_added,
+            hits=previous.hits + int(hit),
+            runs=previous.runs + event.runs_scored,
+            walks=previous.walks + int(walk),
+            strikeouts=previous.strikeouts + int(strikeout),
+        )
     return totals
 
 

@@ -41,7 +41,7 @@ REGRESSION_GAMES = (
         "regulation",
         6,
         2,
-        "99051498e86133f09bd064953690e857a7013437c6a0d023e353e68ae541f597",
+        "990eb5ef22c7c9ae0c4da2d05c584bc8aa9f48af58ac143e8d0152a0eab2e947",
     ),
     (
         0,
@@ -50,7 +50,7 @@ REGRESSION_GAMES = (
         "regulation",
         19,
         2,
-        "e313326b302924ddb665676af798ee2cb30b85784402e2b4b10e3534d79c0fe2",
+        "86a774b7e49f1614b57924fc97ee248b17b1e3e0a29e0532a0127a46c8b8ebdd",
     ),
     (
         27,
@@ -59,7 +59,7 @@ REGRESSION_GAMES = (
         "extra_innings",
         10,
         3,
-        "17c11243547cbe7d8dee57ab5750ec9c4bb1bbddf817b64d60c204a07456c4bf",
+        "1d1309c59227e0a8226aab05a95bf93f9f446f829ebbcfb82d332570a522f440",
     ),
     (
         24,
@@ -68,7 +68,7 @@ REGRESSION_GAMES = (
         "walk_off",
         2,
         3,
-        "4fd78234d60d3d99542f8b120ecb8bda9df58cc300ed982f15558d4583a71df3",
+        "74c102b6bd1eb2d89ad796fc1c95f25a11f3ab0b9c3c6310442ab7f39911ce2e",
     ),
 )
 
@@ -225,12 +225,12 @@ def test_complete_managed_fixture_covers_tactics_fatigue_and_roster_moves():
     assert session.state.result.ending == "walk_off"
     assert len(event_types) == 99
     assert hashlib.sha256("|".join(event_types).encode()).hexdigest() == (
-        "87a218e5289ecc335a6ce18cfc260ff4cc5db650f66eeb9acd854b60e751757a"
+        "34aa63f68c846d508d905a3ae98cba356e6045a4303d06623c66e684255cc7e6"
     )
     assert used_tactics >= {"hit_and_run", "bunt", "steal_second"}
     assert observed_fatigue
     assert counts["error"] == 4
-    assert counts["double_play"] == 3
+    assert counts["double_play"] == 2
     assert counts["pitching_change"] == 4
     assert counts["pinch_hit"] == 2
     assert counts["pinch_run"] == 2
@@ -272,16 +272,16 @@ def test_three_column_dashboard_renders_every_state_of_a_complete_game():
     rendered = 0
 
     while not session.state.is_final:
-        ready = app.dashboard_screen(field, width=150, height=42)
-        assert len(ready.splitlines()) == 42
+        ready = app.dashboard_screen(field, width=150, height=47)
+        assert len(ready.splitlines()) == 47
         session.perform(resolve_swing)
-        pending = app.dashboard_screen(narration, width=150, height=42)
+        pending = app.dashboard_screen(narration, width=150, height=47)
         assert "Press Enter when scored." in pending
         assert "NARRATION" in pending
         session.confirm_scorekeeping()
         rendered += 2
 
-    final = app.dashboard_screen(field, width=150, height=42)
+    final = app.dashboard_screen(field, width=150, height=47)
     assert "FINAL" in final
     assert "Game complete. Press Q to exit." in final
     assert rendered == 148
@@ -331,7 +331,7 @@ def test_daring_managers_complete_game_without_human_strategy_input(tmp_path):
     assert session.state.result.inning == 10
     assert len(event_types) == 76
     assert hashlib.sha256("|".join(event_types).encode()).hexdigest() == (
-        "c53ee7201ff001cc7c5c9ceb4ce0cf49af9ec7bd6dd7b97726e45d71e92a9e71"
+        "b740621346dd009960c525f068bb7fabd52b50bd076c4d002de86790492dec61"
     )
     assert text.count("manager: Daring") == 23
     assert text.count("pitching decision") == 8

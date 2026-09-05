@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import curses
 from pathlib import Path
+import re
 import textwrap
 
 from .layout import DashboardView, MIN_COLUMNS, MIN_ROWS, compose_modal
 from .narration import Narrator
 from .session import GameSession, SessionError
-from .tui import TerminalApp
+from .tui import TerminalApp, _ordinal
 
 
 class FullscreenApp(TerminalApp):
@@ -35,17 +36,18 @@ class FullscreenApp(TerminalApp):
             curses.curs_set(0)
         except curses.error:
             pass
+        if self._intro_pending:
+            try:
+                self._show_centered_message(
+                    self.intro_screen().splitlines(), wait=True
+                )
+            except KeyboardInterrupt:
+                return 130
+            self._intro_pending = False
         while True:
             try:
                 if self.session.state.is_final and self.session.pending_event is None:
                     self._archive_completed_game()
-                if (
-                    self.session.pending_event is None
-                    and not self.session.state.is_final
-                    and self._offense_is_computer()
-                ):
-                    self._perform_computer_action()
-                    continue
                 self._draw()
                 key = self.screen.get_wch()
                 if key == "\x03":
@@ -62,7 +64,14 @@ class FullscreenApp(TerminalApp):
                     continue
                 if self.session.pending_event is not None:
                     if key in ("\n", "\r", curses.KEY_ENTER):
+                        before = self.session.history[-1].state_before
+                        after = self.session.state
                         self.session.confirm_scorekeeping()
+                        if (before.inning, before.half) != (
+                            after.inning,
+                            after.half,
+                        ):
+                            self._show_inning_transition(before, after)
                         self._archive_completed_game()
                         self._notice = None
                     elif _letter(key) == "?":
@@ -78,7 +87,14 @@ class FullscreenApp(TerminalApp):
                     else:
                         self._notice = "The play is still awaiting scorecard confirmation."
                     continue
-                letter = _letter(key)
+                letter = (
+                    "S"
+                    if key in ("\n", "\r", curses.KEY_ENTER)
+                    else _letter(key)
+                )
+                if self._offense_is_computer() and letter == "S":
+                    self._perform_computer_action()
+                    continue
                 if letter and self._handle_ready_command(letter):
                     return 0
             except KeyboardInterrupt:
@@ -137,6 +153,9 @@ class FullscreenApp(TerminalApp):
                 self.screen.addnstr(row, 0, line, max(0, limit))
                 self._add_team_colors(row, line, limit)
                 self._add_scoreboard_colors(row, line, limit)
+                self._add_rating_colors(row, line, limit)
+                self._add_narration_box_colors(row, line, limit)
+                self._add_information_colors(row, line, limit)
             except curses.error:
                 pass
         self.screen.refresh()
@@ -151,6 +170,9 @@ class FullscreenApp(TerminalApp):
             curses.init_pair(2, curses.COLOR_YELLOW, -1)
             curses.init_pair(3, curses.COLOR_GREEN, -1)
             curses.init_pair(4, curses.COLOR_RED, -1)
+            curses.init_pair(5, curses.COLOR_WHITE, -1)
+            orange = 208 if getattr(curses, "COLORS", 0) >= 256 else curses.COLOR_YELLOW
+            curses.init_pair(6, orange, -1)
         except curses.error:
             return
         source = self.session.state.source
@@ -210,6 +232,100 @@ class FullscreenApp(TerminalApp):
                     )
                 except curses.error:
                     pass
+
+    def _add_rating_colors(self, row: int, line: str, limit: int) -> None:
+        for match in re.finditer(r"\b(BT|OBT)\s+(\d+)\b", line[:limit]):
+            label, raw = match.groups()
+            value = int(raw)
+            if label == "BT":
+                pair = 3 if value >= 30 else 2 if value >= 27 else 4
+            else:
+                pair = 3 if value >= 38 else 2 if value >= 35 else 4
+            start = match.start(2)
+            try:
+                self.screen.addnstr(
+                    row,
+                    start,
+                    raw,
+                    len(raw),
+                    curses.color_pair(pair) | curses.A_BOLD,
+                )
+            except curses.error:
+                pass
+
+    def _add_narration_box_colors(self, row: int, line: str, limit: int) -> None:
+        if not self._team_colors:
+            return
+        attribute = curses.color_pair(5) | curses.A_DIM
+        for column, character in enumerate(line[:limit]):
+            if character not in {"┌", "─", "┐", "│", "└", "┘"}:
+                continue
+            try:
+                self.screen.addstr(row, column, character, attribute)
+            except curses.error:
+                pass
+
+    def _add_information_colors(self, row: int, line: str, limit: int) -> None:
+        if not self._team_colors:
+            return
+        messages = (
+            "Computer offense is paused for your defensive decision. "
+            "Press Enter or S to continue.",
+            "Press Enter when scored.",
+            "Waiting for the next play.",
+            "MANAGER NOTICE:",
+        )
+        attribute = curses.color_pair(6) | curses.A_BOLD
+        for message in messages:
+            start = line.find(message, 0, limit)
+            if start < 0:
+                continue
+            length = len(message)
+            if message == "MANAGER NOTICE:":
+                length = len(line[:limit].rstrip()) - start
+            try:
+                self.screen.addnstr(
+                    row,
+                    start,
+                    line[start:start + length],
+                    min(length, limit - start),
+                    attribute,
+                )
+            except curses.error:
+                pass
+
+    def _show_centered_message(self, lines: list[str], *, wait: bool = False) -> None:
+        height, width = self.screen.getmaxyx()
+        self.screen.erase()
+        modal = compose_modal(lines, width=width, height=height).splitlines()
+        for row, line in enumerate(modal[:height]):
+            try:
+                self.screen.addnstr(row, 0, line, width)
+            except curses.error:
+                pass
+        self.screen.refresh()
+        if wait:
+            while self.screen.get_wch() not in ("\n", "\r", curses.KEY_ENTER):
+                pass
+
+    def _show_inning_transition(self, before, after) -> None:
+        ending = f"END {before.half.upper()} {_ordinal(before.inning)}"
+        beginning = f"{after.half.upper()} {_ordinal(after.inning)}"
+        for title in (ending, "◆"):
+            self._show_centered_message(
+                ["INNING TRANSITION", "", title],
+            )
+            curses.napms(220)
+        self._show_centered_message(
+            [
+                "INNING TRANSITION",
+                "",
+                beginning,
+                "",
+                "Press Enter to continue.",
+            ],
+            wait=True,
+        )
 
     def _dashboard_state_lines(self) -> list[str]:
         if self._dialog is not None:

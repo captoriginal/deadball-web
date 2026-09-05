@@ -81,18 +81,32 @@ TEMPLATES: Mapping[str, tuple[_Template, ...]] = {
         _Template("{batter} launches a home run.", ("batter",)),
         _Template("{batter} circles the bases after sending it over the fence.", ("batter",)),
     ),
+    "grand_slam": (
+        _Template("Grand slam! {batter} clears the bases!", ("batter",)),
+        _Template("{batter} launches a grand slam!", ("batter",)),
+        _Template("A grand slam for {batter}!", ("batter",)),
+    ),
     "groundout": (
         _Template("{batter} grounds to {fielder}.", ("batter", "fielder")),
         _Template("A ground ball to {fielder} retires {batter}.", ("fielder", "batter")),
         _Template("{batter} is retired on a grounder to {fielder}.", ("batter", "fielder")),
-        _Template("{fielder} fields {batter}'s ground ball for the out.", ("fielder", "batter")),
+        _Template(
+            "{fielder_cap} fields {batter}'s ground ball for the out.",
+            ("fielder_cap", "batter"),
+        ),
         _Template("{batter} bounces one to {fielder} and is retired.", ("batter", "fielder")),
     ),
     "flyout": (
         _Template("{batter} flies out to {fielder}.", ("batter", "fielder")),
-        _Template("{fielder} retires {batter} on a fly ball.", ("fielder", "batter")),
+        _Template(
+            "{fielder_cap} retires {batter} on a fly ball.",
+            ("fielder_cap", "batter"),
+        ),
         _Template("A fly ball to {fielder} is caught for the out.", ("fielder",)),
-        _Template("{fielder} settles under {batter}'s fly ball.", ("fielder", "batter")),
+        _Template(
+            "{fielder_cap} settles under {batter}'s fly ball.",
+            ("fielder_cap", "batter"),
+        ),
         _Template("{batter} lifts a routine fly to {fielder}.", ("batter", "fielder")),
     ),
     "fielders_choice": (
@@ -103,7 +117,10 @@ TEMPLATES: Mapping[str, tuple[_Template, ...]] = {
         _Template("{batter} grounds into a double play.", ("batter",)),
         _Template("The defense turns two on {batter}.", ("batter",)),
         _Template("A ground ball from {batter} becomes a double play.", ("batter",)),
-        _Template("{fielder} starts a double play on {batter}'s grounder.", ("fielder", "batter")),
+        _Template(
+            "{fielder_cap} starts a double play on {batter}'s grounder.",
+            ("fielder_cap", "batter"),
+        ),
         _Template("Two are gone as the defense doubles up {batter}.", ("batter",)),
     ),
     "hit_and_run_double_play": (
@@ -116,12 +133,21 @@ TEMPLATES: Mapping[str, tuple[_Template, ...]] = {
     ),
     "error": (
         _Template("{batter} reaches on an error by {fielder}.", ("batter", "fielder")),
-        _Template("{fielder} commits an error, and {batter} is safe.", ("fielder", "batter")),
+        _Template(
+            "{fielder_cap} commits an error, and {batter} is safe.",
+            ("fielder_cap", "batter"),
+        ),
         _Template("An error by {fielder} allows {batter} to reach.", ("fielder", "batter")),
     ),
     "defensive_out": (
-        _Template("{fielder} takes a hit away from {batter}.", ("fielder", "batter")),
-        _Template("{fielder} turns {batter}'s hit into an out.", ("fielder", "batter")),
+        _Template(
+            "{fielder_cap} takes a hit away from {batter}.",
+            ("fielder_cap", "batter"),
+        ),
+        _Template(
+            "{fielder_cap} turns {batter}'s hit into an out.",
+            ("fielder_cap", "batter"),
+        ),
     ),
     "bunt_fielders_choice": (
         _Template("{batter} bunts, and the defense gets the lead runner.", ("batter",)),
@@ -129,7 +155,10 @@ TEMPLATES: Mapping[str, tuple[_Template, ...]] = {
     ),
     "bunt_out": (
         _Template("{batter} bunts and is retired by {fielder}.", ("batter", "fielder")),
-        _Template("{fielder} handles the bunt and retires {batter}.", ("fielder", "batter")),
+        _Template(
+            "{fielder_cap} handles the bunt and retires {batter}.",
+            ("fielder_cap", "batter"),
+        ),
     ),
     "sacrifice_bunt": (
         _Template("{batter} lays down a sacrifice bunt.", ("batter",)),
@@ -222,6 +251,9 @@ class Narrator:
         template = self._choose_template(family, fields)
         sentences = [template.text.format(**fields)]
         sentences.extend(_runner_sentences(event, before))
+        outs_sentence = _outs_sentence(before, after, event)
+        if outs_sentence is not None:
+            sentences.append(outs_sentence)
         context_sentence = _scoring_context(before, after, event)
         if context_sentence is not None:
             sentences.append(context_sentence)
@@ -229,7 +261,7 @@ class Narrator:
             family=family,
             play_text=" ".join(sentences),
             scoring_guidance=_scoring_guidance(event, before, after),
-            transition_text=_transition_text(before, after),
+            transition_text=_transition_text(before, after, event),
         )
 
     def _choose_template(self, family: str, fields: Mapping[str, str]) -> _Template:
@@ -256,10 +288,12 @@ class Narrator:
 
     def _fields(self, event: NarratedEvent, state: GameState) -> dict[str, str]:
         if isinstance(event, PlayEvent):
+            fielder = _fielder_name(state, event.fielded_by)
             return {
                 "batter": _player_name(state, event.batter_id),
                 "pitcher": _player_name(state, event.pitcher_id),
-                "fielder": _position_name(event.fielded_by),
+                "fielder": fielder[:1].lower() + fielder[1:],
+                "fielder_cap": fielder,
             }
         if isinstance(event, StealEvent):
             move = event.runner_moves[0] if event.runner_moves else None
@@ -283,6 +317,8 @@ def _family(event: NarratedEvent) -> str:
         return event.event_type
     if not event.resolved:
         return "oddity"
+    if event.event_type == "home_run" and event.runs_scored == 4:
+        return "grand_slam"
     if event.event_type == "double_play" and event.classification == "hit_and_run":
         return "hit_and_run_double_play"
     if event.defense_outcome == "out" and event.hit_type is not None:
@@ -395,7 +431,11 @@ def _scoring_context(
         else after.home_score > after.away_score
     )
     if offense_was_behind_or_tied and offense_now_leads:
-        team = before.source.teams.away if before.half == "top" else before.source.teams.home
+        team = (
+            before.source.teams.away
+            if before.half == "top"
+            else before.source.teams.home
+        )
         return f"{team.short_name} takes the lead, {after.away_score}-{after.home_score}."
     return None
 
@@ -466,7 +506,9 @@ def _substitution_guidance(
     return (line, *details)
 
 
-def _transition_text(before: GameState, after: GameState) -> str | None:
+def _transition_text(
+    before: GameState, after: GameState, event: NarratedEvent
+) -> str | None:
     away = before.source.teams.away.short_name
     home = before.source.teams.home.short_name
     score = f"{away} {after.away_score}, {home} {after.home_score}."
@@ -477,8 +519,37 @@ def _transition_text(before: GameState, after: GameState) -> str | None:
         return f"Final: {score} {winner} wins."
     if (before.inning, before.half) != (after.inning, after.half):
         half = "top" if before.half == "top" else "bottom"
-        return f"That ends the {half} of the {_ordinal(before.inning)}. {score}"
+        team = before.source.teams.away if before.half == "top" else before.source.teams.home
+        left = _runners_left_on_base(before, event)
+        lob = (
+            f" {team.short_name} leaves {left} runner{'s' if left != 1 else ''} on base."
+            if left
+            else ""
+        )
+        return f"That ends the {half} of the {_ordinal(before.inning)}.{lob} {score}"
     return None
+
+
+def _outs_sentence(
+    before: GameState, after: GameState, event: NarratedEvent
+) -> str | None:
+    if not isinstance(event, (PlayEvent, StealEvent)) or event.outs_added == 0:
+        return None
+    outs = min(3, before.outs + event.outs_added)
+    if outs == 1:
+        return "There is one out."
+    if outs == 2:
+        return "There are two outs."
+    return "That is the third out."
+
+
+def _runners_left_on_base(before: GameState, event: NarratedEvent) -> int:
+    """Count occupied bases immediately before an inning-ending play."""
+    remaining = {runner for runner in before.bases if runner is not None}
+    for move in getattr(event, "runner_moves", ()):
+        if move.out or move.scored:
+            remaining.discard(move.runner_id)
+    return len(remaining)
 
 
 def _player_name(state: GameState, player_id: str) -> str:
@@ -508,6 +579,40 @@ def _position_name(position: str | None) -> str:
         "CF": "center field",
         "RF": "right field",
     }.get(position, position)
+
+
+def _fielder_name(state: GameState, position: str | None) -> str:
+    if position is None:
+        return ""
+    defense_state = state.home if state.half == "top" else state.away
+    defense_team = (
+        state.source.teams.home
+        if state.half == "top"
+        else state.source.teams.away
+    )
+    player_id = next(
+        (
+            assignment.player_id
+            for assignment in defense_state.active_defense
+            if assignment.position == position
+        ),
+        None,
+    )
+    roles = {
+        "P": "Pitcher",
+        "C": "Catcher",
+        "1B": "First baseman",
+        "2B": "Second baseman",
+        "3B": "Third baseman",
+        "SS": "Shortstop",
+        "LF": "Left fielder",
+        "CF": "Center fielder",
+        "RF": "Right fielder",
+    }
+    role = roles.get(position, position)
+    if player_id is None:
+        return role
+    return f"{role} {defense_team.player(player_id).name}"
 
 
 def _base_name(base: str | None) -> str:

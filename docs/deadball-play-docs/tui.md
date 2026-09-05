@@ -106,12 +106,14 @@ Column 3 has three tabbed modes:
 
 - **Field** uses most of the available column height for an expanded diamond.
   It names all nine active defenders at their positions and gives each base a
-  separate line naming its runner or marking it empty.
+  separate line naming its runner. Empty bases keep their base label but omit
+  an empty-runner placeholder. Only the active RH or LH batter box is shown.
 - **Narration** shows the complete play-by-play for the current game as a
   vertically scrollable log. New plays follow the bottom automatically unless
   the user has scrolled upward.
-- **Box Score / Lineups** shows both live batting orders with each player's
-  position, plate appearances, hits, and runs.
+- **Box Score / Lineups** shows both live batting orders, bench/removed players,
+  and the full pitching staff. Batter lines include AB, R, H, RBI, BB, and K;
+  pitcher lines include IP, H, R, BB, and K.
 
 `Tab` cycles Field, Narration, and Box Score / Lineups. In Narration
 mode, arrow keys and Page Up/Page Down should scroll without advancing the
@@ -142,22 +144,49 @@ A representative layout:
 
 The exact visual design may change, but the information hierarchy should remain stable.
 
-### Scoreboard Header and Play Footer
+### Scoreboard Header and Outcome Panel
 
-A full-width header places vertical B/S/O lights and an inning-direction marker
-on the left, a compact base diamond in the center, and inning lines with R/H/E
-on the right. Deadball resolves whole plate appearances rather than individual
-pitches, so ball and strike lights remain unfilled rather than being fabricated.
-Out lights and occupied bases are filled and colored when supported.
+A full-width header keeps three groups together around the center: vertical
+B/S/O lights and an inning-direction marker, a compact base diamond, and inning
+lines with R/H/E. Full team names share a fixed-width field so every inning and
+total stays aligned. The arrows and inning number use one vertical stack; the
+left-aligned B/S/O stack begins two spaces to its right. Deadball resolves
+whole plate appearances
+rather than individual pitches, so ball and strike lights remain unfilled
+rather than being fabricated. Out lights and occupied bases are filled and
+colored when supported.
 
-A six-line footer remains visible below the three columns. Dice and modifiers
-appear on the left; narration, transition, and paper-scoring guidance appear on
-the right. The footer continues to describe the state-before play until the
-scorekeeping prompt is accepted, even if the mechanical state has moved into
-the next half-inning.
+A centered, twelve-line full-width outcome panel sits immediately below the
+header. It holds dice and modifiers, computer-manager notices, narration,
+paper-scoring guidance, and the `Press Enter when scored` pause. Play narration
+sits inside a gray inner box with one blank row above and below the text and
+three columns of padding on either side. The box contracts to the narration's
+width when space permits and retains a three-column outer inset when it reaches
+its maximum width. Blank rows
+separate the heading, dice, narration, and scoring result. Informational status
+and confirmation text is orange in 256-color terminals, with a yellow fallback
+in limited-color terminals. The panel and
+all three columns continue to describe the state before the play until that
+prompt is accepted, so the next batter never appears prematurely.
+The panel has no redundant `OUTCOME` label. When computer offense is waiting,
+its defensive-decision pause appears here instead of in Column 1.
 
 Away and home team names and player names use distinct terminal colors. Color
 is supplementary; labels and layout remain understandable without it.
+BT and OBT values also use red/yellow/green quality bands in color terminals.
+
+The state column uses only the room its content needs so the context column can
+stay wider. In Box Score / Lineups, both clubs use matching fixed-width player
+and statistical columns so every AB, R, H, RBI, BB, K, and pitcher value aligns.
+The longest displayed player name and the statistical columns have a
+three-column gap.
+
+Fresh games begin with an introduction that requires Enter. A computer batting
+side then waits for Enter or S before each plate appearance, leaving the human
+free to make a mound change, defensive substitution, or position switch and to
+inspect lineups, pitchers, history, or the relevant rule before continuing.
+The centered half-inning transition animates briefly, then holds its final frame
+until Enter is pressed.
 
 ---
 

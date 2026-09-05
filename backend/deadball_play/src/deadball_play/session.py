@@ -36,6 +36,7 @@ from deadball_core import (
 SAVE_FORMAT_VERSION = 1
 APPLICATION_VERSION = "0.1.0"
 RULESET_ID = "deadball_second_edition_modern"
+DEFAULT_COMPUTER_DARING = 10
 
 SessionAction = Callable[[GameState, RandomDice], ActionResult]
 HistoryEvent = PlayEvent | StealEvent | SubstitutionEvent
@@ -62,9 +63,9 @@ class SessionConfig:
     home_daring: int | None = None
 
     def __post_init__(self) -> None:
-        for side, control, daring in (
-            ("away", self.away_control, self.away_daring),
-            ("home", self.home_control, self.home_daring),
+        for side, control, daring, attribute in (
+            ("away", self.away_control, self.away_daring, "away_daring"),
+            ("home", self.home_control, self.home_daring, "home_daring"),
         ):
             if control not in {"human", "computer"}:
                 raise SessionError(f"{side}_control must be 'human' or 'computer'")
@@ -74,7 +75,7 @@ class SessionConfig:
                 except ValueError as exc:
                     raise SessionError(f"invalid {side} Daring: {exc}") from exc
             if control == "computer" and daring is None:
-                raise SessionError(f"computer-controlled {side} team requires Daring")
+                object.__setattr__(self, attribute, DEFAULT_COMPUTER_DARING)
 
 
 @dataclass(frozen=True)

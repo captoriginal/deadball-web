@@ -997,7 +997,9 @@ def _complete_out_play(
 
     if infield and bases[0] is not None:
         first_runner = bases[0]
-        if mss >= 100 and bases[1] is not None and state.outs == 0:
+        if state.outs >= 2:
+            moves.append(RunnerMove(batter_id, "BATTER", out=True))
+        elif mss >= 100 and bases[1] is not None and state.outs == 0:
             moves.extend((
                 RunnerMove(first_runner, "1B", out=True),
                 RunnerMove(bases[1], "2B", out=True),
@@ -1035,6 +1037,8 @@ def _complete_out_play(
 def _out_event_type(out: OutTableResult, state: GameState, mss: int) -> str:
     infield = out.fielded_by in {"1B", "2B", "3B", "SS"}
     if not infield or state.bases[0] is None:
+        return out.event_type
+    if state.outs >= 2:
         return out.event_type
     if mss >= 100 and state.bases[1] is not None and state.outs == 0:
         return "triple_play"

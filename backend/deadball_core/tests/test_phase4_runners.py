@@ -3,6 +3,7 @@ from dataclasses import replace
 import pytest
 
 from deadball_core.dice import FixedDice
+from deadball_core.events import RunnerMove
 from deadball_core.game_data import load_generated_game
 from deadball_core.rules import resolve_swing
 from deadball_core.state import initialize_game
@@ -147,10 +148,14 @@ def test_sacrifice_run_counts_before_third_out_but_not_with_two_outs():
     assert two_outs.new_state.half == "bottom"
 
 
-def test_inning_ending_double_play_records_only_remaining_outs():
+def test_two_out_ground_ball_is_never_recorded_as_a_double_play():
     result = swing(("r1", None, "r3"), [70, 6], outs=2)
+    assert result.event.event_type == "groundout"
     assert result.event.outs_added == 1
     assert result.event.runs_scored == 0
+    assert result.event.runner_moves == (
+        RunnerMove(result.event.batter_id, "BATTER", out=True),
+    )
     assert result.new_state.half == "bottom"
 
 

@@ -844,6 +844,41 @@ centered final summary and automatic archive without changing game mechanics.
 
 ---
 
+# Phase 17 — Scorekeeping and Computer-Turn Refinement
+
+## Goal
+
+Make each plate appearance read as a deliberate tabletop scoring step and keep
+the human able to manage the defense while the opposing offense is automated.
+
+## Implement
+
+- centered full-width outcome panel immediately below the scoreboard
+- pre-play batter, bases, outs, and line score until scorekeeping confirmation
+- inning-transition animation after confirmation
+- named fielders, explicit out counts, left-on-base calls, and grand-slam calls
+- no double-play result when two outs already exist
+- AB/R/H/RBI/BB/K batter lines and IP/H/R/BB/K pitcher lines
+- bench, removed players, and full pitching staffs in the lineup tab
+- red/yellow/green BT and OBT presentation bands
+- Enter as an alternate Swing key
+- a fresh-game introduction before any automated action
+- defensive controls and inspection commands before each computer plate appearance
+- neutral Daring 10 when computer control is selected without an explicit rating
+
+## Rulebook Use
+
+Only the double-play and Managerial Daring rules. Layout, animation, pausing,
+stat presentation, and computer-turn control are application procedures.
+
+## Done When
+
+A pending play never leaks the next batter, the user can intervene defensively
+before computer offense continues, and the scorekeeping outcome remains clear
+from dice roll through confirmation and inning transition.
+
+---
+
 # Version 1 Release Gate
 
 Version 1 should not be considered complete until:

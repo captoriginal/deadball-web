@@ -300,13 +300,18 @@ def test_load_rejects_state_that_would_corrupt_future_play(tmp_path):
     "config",
     [
         {"home_control": "robot"},
-        {"home_control": "computer", "home_daring": None},
         {"home_daring": 20},
     ],
 )
 def test_session_config_validates_control_and_daring(config):
     with pytest.raises(SessionError):
         SessionConfig(**config)
+
+
+def test_computer_control_uses_neutral_daring_when_omitted():
+    config = SessionConfig(home_control="computer")
+
+    assert config.home_daring == 10
 
 
 def test_undo_and_confirmation_require_history():

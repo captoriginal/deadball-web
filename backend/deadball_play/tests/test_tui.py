@@ -5,7 +5,7 @@ from pathlib import Path
 import random
 import sqlite3
 import sys
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from deadball_core import (
     RandomDice,
@@ -31,12 +31,14 @@ from deadball_play.layout import (
 )
 from deadball_play.tui import (
     TerminalApp,
+    _narration_box,
     main,
     render_bullpen,
     render_dice,
     render_game_screen,
     render_lineup,
 )
+from deadball_play.summary import build_batting_lines, build_pitching_lines
 
 
 CORE_TESTS = Path(__file__).parents[2] / "deadball_core" / "tests"
@@ -111,15 +113,15 @@ def test_three_column_dashboard_separates_state_vertical_options_and_field():
     app = TerminalApp(session)
     view = DashboardView()
 
-    screen = app.dashboard_screen(view, width=160, height=42)
+    screen = app.dashboard_screen(view, width=160, height=47)
     lines = screen.splitlines()
     left_width, middle_width, _ = column_widths(160)
     first_separator = left_width + 1
     second_separator = first_separator + middle_width + 1
 
-    assert len(lines) == 42
+    assert len(lines) == 47
     assert all(len(line) == 160 for line in lines)
-    assert "CURRENT STATE" in screen[:first_separator * 32]
+    assert any("CURRENT STATE" in line[:first_separator] for line in lines)
     assert any(
         first_separator < line.index("[S] Swing") < second_separator
         for line in lines
@@ -134,9 +136,10 @@ def test_three_column_dashboard_separates_state_vertical_options_and_field():
     assert "DEFENSE: Hosts" in screen
     assert all(f"Hosts Hitter {slot}" in screen for slot in range(1, 9))
     assert "Hosts Starter" in screen
-    assert "[1B BASE]" in screen
-    assert "Runner: Visitors Hitter 2" in screen
-    assert "DICE ROLLS" in screen and "OUTCOME" in screen
+    assert "[1B]" in screen
+    assert "Runner: V. 2" in screen
+    assert "OUTCOME" not in screen
+    assert "Waiting for the next play." in screen
     assert "1  2  3  4  5  6  7  8  9" in screen
     assert all(line.endswith(("|", "+")) for line in lines)
 
@@ -151,7 +154,7 @@ def test_expanded_field_keeps_every_position_and_runner_at_minimum_width():
     field = field_panel(state, right_width)
     rendered = "\n".join(field)
 
-    assert len(field) == 21
+    assert len(field) == 25
     assert all(
         position in rendered
         for position in (
@@ -159,14 +162,113 @@ def test_expanded_field_keeps_every_position_and_runner_at_minimum_width():
             "[CF]",
             "[RF]",
             "[SS]",
+            "--RHP--",
             "[2B]",
             "[3B]",
-            "[P]",
             "[1B]",
             "[C]",
         )
     )
-    assert all(f"Visitors Hitter {slot}" in rendered for slot in (2, 3, 4))
+    assert all(f"Runner: V. {slot}" in rendered for slot in (2, 3, 4))
+    assert "OUTFIELD" not in rendered and "INFIELD" not in rendered
+    assert "Runner: empty" not in rendered
+
+    outfielder_row = next(
+        index for index, line in enumerate(field) if "[LF]" in line
+    )
+    second_base_row = next(
+        index for index, line in enumerate(field) if "[2B]" in line
+    )
+    assert field[outfielder_row + 1:outfielder_row + 4] == ["", "", ""]
+    assert field[second_base_row + 2:second_base_row + 5] == ["", "", ""]
+
+    corner_names = next(line for line in field if "Hosts Hitter 4" in line)
+    corner_bases = next(line for line in field if "[3B]" in line)
+    corner_runners = next(line for line in field if "Runner: V. 4" in line)
+    name_center = corner_names.index("Hosts Hitter 4") + len("Hosts Hitter 4") // 2
+    base_center = corner_bases.index("[3B]") + len("[3B]") // 2
+    runner_center = corner_runners.index("Runner: V. 4") + len("Runner: V. 4") // 2
+    assert abs(name_center - base_center) <= 1
+    assert abs(base_center - runner_center) <= 1
+
+    defense_row = next(
+        index for index, line in enumerate(field) if "DEFENSE: Hosts" in line
+    )
+    corner_runner_row = next(
+        index for index, line in enumerate(field) if "Runner: V. 4" in line
+    )
+    assert field[defense_row + 1:defense_row + 3] == ["", ""]
+    assert field[corner_runner_row + 1:corner_runner_row + 3] == ["", ""]
+
+
+def test_field_hides_empty_runners_and_inactive_batter_box():
+    field = field_panel(initial_state(), column_widths(120)[2])
+    rendered = "\n".join(field)
+
+    assert "Runner: empty" not in rendered
+    assert "RH BATTER" not in rendered
+    assert "LH BATTER" in rendered
+    assert "BASE" not in rendered
+
+
+def test_field_places_position_labels_below_names_and_batters_near_plate():
+    field_width = 74
+    field = field_panel(initial_state(), field_width)
+
+    left_fielder = next(i for i, line in enumerate(field) if "Hosts Hitter 6" in line)
+    outfield_labels = next(i for i, line in enumerate(field) if "[LF]" in line)
+    shortstop = next(i for i, line in enumerate(field) if "Hosts Hitter 5" in line)
+    second_baseman = next(
+        i for i, line in enumerate(field) if "Hosts Hitter 3" in line
+    )
+    shortstop_label = next(i for i, line in enumerate(field) if "[SS]" in line)
+    catcher = next(i for i, line in enumerate(field) if "Hosts Hitter 1" in line)
+    catcher_label = next(i for i, line in enumerate(field) if "[C]" in line)
+    batter_line = next(line for line in field if "LH BATTER" in line)
+    plate_line = next(line for line in field if "( )" in line)
+
+    assert left_fielder < outfield_labels
+    assert shortstop == second_baseman + 1
+    assert shortstop < shortstop_label
+    first_cell_width = (field_width - 2) // 3
+    expected_centered_start = (first_cell_width - len("Hosts Hitter 5")) // 2
+    assert field[shortstop].index("Hosts Hitter 5") == expected_centered_start + 9
+    assert catcher < catcher_label
+    assert abs(batter_line.index("LH BATTER") - plate_line.index("( )")) < len(plate_line) // 3
+
+
+def test_scoreboard_clusters_groups_and_places_half_arrows_around_inning():
+    top = TerminalApp(GameSession(initial_state()))._scoreboard_lines(160)
+    bottom_state = replace(initial_state(), half="bottom")
+    bottom = TerminalApp(GameSession(bottom_state))._scoreboard_lines(160)
+
+    assert "▲" in top[0] and "▲" not in top[2]
+    assert "▼" in bottom[2] and "▼" not in bottom[0]
+    assert top[0].index("▲") == top[1].index("1")
+    assert bottom[2].index("▼") == bottom[1].index("1")
+    assert top[0].index("B:") == top[1].index("S:") == top[2].index("O:")
+    assert top[0].index("B:") - top[0].index("▲") == 4
+    assert "Visitors" in top[1] and "Hosts" in top[2]
+    assert top[0].index("▲") == 38
+    assert top[0].index("B:") > 20
+    assert len(top[0]) - len(top[0].rstrip()) > 20
+
+
+def test_inning_transition_pauses_on_final_frame_for_enter():
+    before = replace(initial_state(), inning=3, half="top")
+    after = replace(initial_state(), inning=3, half="bottom")
+    fake_screen = Mock()
+    app = FullscreenApp(GameSession(before), fake_screen)
+    app._show_centered_message = Mock()
+
+    with patch("deadball_play.fullscreen.curses.napms") as napms:
+        app._show_inning_transition(before, after)
+
+    assert napms.call_count == 2
+    final_call = app._show_centered_message.call_args_list[-1]
+    assert "BOTTOM 3rd" in final_call.args[0]
+    assert "Press Enter to continue." in final_call.args[0]
+    assert final_call.kwargs == {"wait": True}
 
 
 def test_narration_column_toggles_scrolls_and_never_changes_game_state():
@@ -192,13 +294,18 @@ def test_third_column_cycles_field_narration_and_lineups():
     app = TerminalApp(session)
     view = DashboardView()
 
-    assert "FIELD" in app.dashboard_screen(view, width=160, height=42)
+    assert "FIELD" in app.dashboard_screen(view, width=160, height=47)
     view.toggle()
-    assert "NARRATION" in app.dashboard_screen(view, width=160, height=42)
+    assert "NARRATION" in app.dashboard_screen(view, width=160, height=47)
     view.toggle()
-    lineups = app.dashboard_screen(view, width=160, height=42)
+    lineups = app.dashboard_screen(view, width=160, height=47)
     assert "LINEUPS" in lineups
     assert "Milo Hayes" in lineups and "Silas Reed" in lineups
+    assert "BENCH / REMOVED" in lineups
+    assert "PITCHERS" in lineups
+    assert "RBI" in lineups and "IP" in lineups
+    assert "Wesley Quinn   " in lineups
+    assert "Arthur Vaughn   " in lineups
     view.toggle()
     assert view.context_mode == "field"
 
@@ -248,6 +355,123 @@ def test_pending_play_shows_dice_narration_scoring_and_pause():
     assert not session.scorekeeping_confirmed
 
 
+def test_outcome_narration_box_has_one_row_and_three_columns_of_padding():
+    narration = "A sharply hit ground ball ends the inning."
+    box = _narration_box(
+        narration,
+        width=60,
+    )
+
+    assert len(box) == 5
+    assert box[0].startswith("┌") and box[0].endswith("┐")
+    assert box[4].startswith("└") and box[4].endswith("┘")
+    assert len(box[0]) == len(narration) + 8
+    assert box[1] == "│" + " " * (len(narration) + 6) + "│"
+    assert box[3] == box[1]
+    assert box[2] == f"│   {narration}   │"
+
+
+def test_box_score_derives_standard_batter_and_pitcher_stats():
+    session = GameSession(initial_state(), rng=StatefulFixedDice([18, 2, 9]))
+    batter_id = session.state.away.lineup[0]
+    pitcher_id = session.state.home.active_pitcher_id
+
+    session.perform(resolve_swing)
+    batting = build_batting_lines(session.history)
+    pitching = build_pitching_lines(session.history)
+
+    assert batting[batter_id].at_bats == 1
+    assert batting[batter_id].hits == 1
+    assert batting[batter_id].rbi == 0
+    assert pitching[pitcher_id].hits == 1
+    assert pitching[pitcher_id].innings_pitched == "0.0"
+
+
+def test_pending_dashboard_keeps_previous_batter_until_score_is_confirmed():
+    session = GameSession(initial_state(), rng=StatefulFixedDice([50, 1]))
+    first_batter = session.state.away.lineup[0]
+    second_batter = session.state.away.lineup[1]
+    first_name = session.state.source.teams.away.player(first_batter).name
+    second_name = session.state.source.teams.away.player(second_batter).name
+    app = TerminalApp(session)
+
+    session.perform(resolve_swing)
+    pending = app.dashboard_screen(DashboardView(), width=160, height=47)
+
+    assert first_name in pending
+    boxed_narration = next(
+        line[line.index("│"):line.rindex("│") + 1]
+        for line in pending.splitlines()
+        if line.count("│") == 2
+        and line[line.index("│") + 1:line.rindex("│")].strip()
+    )
+    assert boxed_narration.startswith("│   ")
+    assert boxed_narration.endswith("   │")
+    assert "Review the outcome above." not in pending
+    assert second_name not in "\n".join(
+        line.split("|")[1]
+        for line in pending.splitlines()[11:-1]
+        if line.startswith("|")
+    )
+    assert "Press Enter when scored." in "\n".join(pending.splitlines()[4:17])
+
+    session.confirm_scorekeeping()
+    confirmed = app.dashboard_screen(DashboardView(), width=160, height=47)
+    assert second_name in confirmed
+
+
+def test_line_mode_enter_swings_after_intro(tmp_path):
+    session = GameSession(
+        initial_state(),
+        rng=StatefulFixedDice([50, 1]),
+        autosave_path=tmp_path / "enter-swing.json",
+    )
+    app = TerminalApp(
+        session,
+        input_func=scripted_input("", "", "", "Q"),
+        output=StringIO(),
+    )
+
+    assert app.run() == 0
+    assert len(session.history) == 1
+
+
+def test_computer_offense_pauses_for_intro_and_continue_command(tmp_path):
+    session = GameSession(
+        initial_state(),
+        rng=StatefulFixedDice([50, 1]),
+        config=SessionConfig(away_control="computer"),
+        autosave_path=tmp_path / "computer.json",
+    )
+    prompts = []
+    responses = iter(("", "", "", "Q"))
+    app = TerminalApp(
+        session,
+        input_func=lambda prompt="": (prompts.append(prompt), next(responses))[1],
+        output=StringIO(),
+    )
+
+    assert app.run() == 0
+    assert len(session.history) == 1
+    assert prompts[0] == "Press Enter to begin. "
+    assert "continue computer" in prompts[1]
+
+
+def test_computer_pause_message_appears_only_in_full_width_status_area():
+    session = GameSession(
+        initial_state(),
+        config=SessionConfig(away_control="computer"),
+    )
+    app = TerminalApp(session)
+
+    screen = app.dashboard_screen(DashboardView(), width=160, height=47)
+    lines = screen.splitlines()
+    message = "Computer offense is paused for your defensive decision."
+
+    assert message in "\n".join(lines[4:17])
+    assert message not in "\n".join(lines[18:])
+
+
 def test_rule_history_lineup_and_bullpen_views_use_structured_state():
     state = initial_state()
     session = GameSession(state, rng=StatefulFixedDice([50, 1]))
@@ -275,7 +499,7 @@ def test_scripted_gameplay_confirms_scorecard_then_saves_and_quits(tmp_path):
     output = StringIO()
     app = TerminalApp(
         session,
-        input_func=scripted_input("S", "?", "", "", "Q"),
+        input_func=scripted_input("", "S", "?", "", "", "Q"),
         output=output,
     )
 

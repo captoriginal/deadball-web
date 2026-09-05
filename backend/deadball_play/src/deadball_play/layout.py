@@ -10,7 +10,7 @@ from deadball_core import GameState
 
 
 MIN_COLUMNS = 120
-MIN_ROWS = 36
+MIN_ROWS = 44
 CONTEXT_MODES = ("field", "narration", "lineups")
 
 
@@ -40,7 +40,7 @@ def column_widths(width: int) -> tuple[int, int, int]:
     if width < MIN_COLUMNS:
         raise ValueError(f"terminal must be at least {MIN_COLUMNS} columns wide")
     available = width - 4
-    left = max(36, int(available * 0.34))
+    left = max(36, int(available * 0.30))
     middle = max(22, int(available * 0.22))
     return left, middle, available - left - middle
 
@@ -76,26 +76,27 @@ def compose_columns(
 
 def compose_dashboard(
     header: Iterable[str],
+    outcome: Iterable[str],
     left: Iterable[str],
     middle: Iterable[str],
     right: Iterable[str],
-    footer_left: Iterable[str],
-    footer_right: Iterable[str],
     *,
     width: int,
     height: int,
 ) -> str:
-    """Compose a scoreboard, three-column body, and six-line result footer."""
+    """Compose a scoreboard, full-width outcome, and three-column body."""
     if height < MIN_ROWS:
         raise ValueError(f"terminal must be at least {MIN_ROWS} rows high")
     widths = column_widths(width)
     header_height = 3
-    footer_height = 6
-    body_height = height - header_height - footer_height - 4
+    outcome_height = 12
+    body_height = height - header_height - outcome_height - 4
     border = "+" + "-" * (width - 2) + "+"
     column_border = "+" + "+".join("-" * item for item in widths) + "+"
     rows = [border]
     rows.extend(_full_width_rows(header, width - 2, header_height))
+    rows.append(border)
+    rows.extend(_centered_width_rows(outcome, width - 2, outcome_height))
     rows.append(column_border)
     panels = [
         _panel_lines(lines, panel_width)
@@ -105,18 +106,6 @@ def compose_dashboard(
         cells = [
             panel[index] if index < len(panel) else " " * panel_width
             for panel, panel_width in zip(panels, widths)
-        ]
-        rows.append("|" + "|".join(cells) + "|")
-    footer_widths = ((width - 3) // 2, width - 3 - (width - 3) // 2)
-    rows.append("+" + "+".join("-" * item for item in footer_widths) + "+")
-    footer_panels = [
-        _panel_lines(lines, panel_width)
-        for lines, panel_width in zip((footer_left, footer_right), footer_widths)
-    ]
-    for index in range(footer_height):
-        cells = [
-            panel[index] if index < len(panel) else " " * panel_width
-            for panel, panel_width in zip(footer_panels, footer_widths)
         ]
         rows.append("|" + "|".join(cells) + "|")
     rows.append(border)
@@ -145,11 +134,19 @@ def field_panel(state: GameState, width: int) -> list[str]:
     defense_side = "home" if state.half == "top" else "away"
     offense_side = "away" if state.half == "top" else "home"
     defense_state = getattr(state, defense_side)
+    offense_state = getattr(state, offense_side)
     defense_team = getattr(state.source.teams, defense_side)
     offense_team = getattr(state.source.teams, offense_side)
+    batter_id = offense_state.lineup[offense_state.batting_order_index]
+    batter = offense_team.player(batter_id)
+    pitcher = defense_team.player(defense_state.active_pitcher_id or "")
+    batting_side = batter.bats
+    if batting_side == "S":
+        batting_side = "L" if pitcher.throws == "R" else "R"
     content_width = max(1, width - 2)
     two_cell_limit = max(8, content_width // 2)
     three_cell_limit = max(8, content_width // 3)
+    five_cell_limit = max(8, content_width // 5)
     defenders = {
         item.position: defense_team.player(item.player_id).name
         for item in defense_state.active_defense
@@ -159,58 +156,98 @@ def field_panel(state: GameState, width: int) -> list[str]:
         runners[base] = (
             offense_team.player(player_id).name
             if player_id is not None
-            else "empty"
+            else ""
         )
+
+    right_hand_batter = batter.name if batting_side == "R" else ""
+    left_hand_batter = batter.name if batting_side == "L" else ""
+    right_hand_label = "RH BATTER" if right_hand_batter else ""
+    left_hand_label = "LH BATTER" if left_hand_batter else ""
 
     return [
         _ends("FIELD", "[Tab: Narration]", content_width),
         _center(f"DEFENSE: {defense_team.name}", content_width),
         "",
-        _center("[CF]", content_width),
-        _center(_short_name(defenders.get("CF", "-"), content_width), content_width),
-        _columns(("[LF]", "[RF]"), content_width),
+        "",
+        _center(
+            _short_name(defenders.get("CF", "-"), content_width),
+            content_width,
+        ),
         _columns(
-            tuple(
-                _short_name(defenders.get(position, "-"), two_cell_limit)
-                for position in ("LF", "RF")
+            (
+                _short_name(defenders.get("LF", "-"), three_cell_limit),
+                "[CF]",
+                _short_name(defenders.get("RF", "-"), three_cell_limit),
+            ),
+            content_width,
+        ),
+        _columns(("[LF]", "", "[RF]"), content_width),
+        "",
+        "",
+        "",
+        _center(
+            _short_name(defenders.get("2B", "-"), content_width),
+            content_width,
+        ),
+        _columns_shifted(
+            (
+                _short_name(defenders.get("SS", "-"), three_cell_limit),
+                "[2B]",
+                "",
+            ),
+            content_width,
+            shifts=(9, 0, 0),
+        ),
+        _columns_shifted(
+            ("[SS]", _runner_text(runners["2B"], three_cell_limit), ""),
+            content_width,
+            shifts=(9, 0, 0),
+        ),
+        "",
+        "",
+        "",
+        _columns(
+            (
+                _short_name(defenders.get("3B", "-"), three_cell_limit),
+                f"--{pitcher.throws}HP--",
+                _short_name(defenders.get("1B", "-"), three_cell_limit),
+            ),
+            content_width,
+        ),
+        _columns(
+            (
+                "[3B]",
+                _short_name(defenders.get("P", "-"), three_cell_limit),
+                "[1B]",
+            ),
+            content_width,
+        ),
+        _columns(
+            (
+                _runner_text(runners["3B"], three_cell_limit),
+                "",
+                _runner_text(runners["1B"], three_cell_limit),
             ),
             content_width,
         ),
         "",
-        _center("/---------------- OUTFIELD ----------------\\", content_width),
-        _columns(("[SS]", "[2B]"), content_width),
+        "",
         _columns(
-            tuple(
-                _short_name(defenders.get(position, "-"), two_cell_limit)
-                for position in ("SS", "2B")
+            ("", right_hand_label, "", left_hand_label, ""),
+            content_width,
+        ),
+        _columns(
+            (
+                "",
+                _short_name(right_hand_batter, five_cell_limit),
+                "( )",
+                _short_name(left_hand_batter, five_cell_limit),
+                "",
             ),
             content_width,
         ),
-        _center("[2B BASE]", content_width),
-        _center(
-            f"Runner: {_short_name(runners['2B'], content_width - 8)}",
-            content_width,
-        ),
-        _columns(("[3B]", "[P]", "[1B]"), content_width),
-        _columns(
-            tuple(
-                _short_name(defenders.get(position, "-"), three_cell_limit)
-                for position in ("3B", "P", "1B")
-            ),
-            content_width,
-        ),
-        _columns(("[3B BASE]", "[1B BASE]"), content_width),
-        _columns(
-            tuple(
-                "Runner: " + _short_name(runners[base], two_cell_limit - 8)
-                for base in ("3B", "1B")
-            ),
-            content_width,
-        ),
-        _center("\\---------------- INFIELD ----------------/", content_width),
-        _center("[C]", content_width),
         _center(_short_name(defenders.get("C", "-"), content_width), content_width),
-        _center("HOME PLATE", content_width),
+        _center("[C]", content_width),
     ]
 
 
@@ -246,31 +283,114 @@ def lineups_panel(
     state: GameState,
     width: int,
     batting: Mapping[str, object] | None = None,
+    pitching: Mapping[str, object] | None = None,
 ) -> list[str]:
-    """Render both live batting orders with compact box-score statistics."""
+    """Render both clubs' lineups, bench players, pitchers, and box stats."""
     content_width = max(1, width - 2)
     batting = batting or {}
-    lines = [_ends("BOX SCORE / LINEUPS", "[Tab: Field]", content_width)]
-    for side in ("away", "home"):
-        team_state = getattr(state, side)
-        team = getattr(state.source.teams, side)
+    pitching = pitching or {}
+    table_gap = 2
+    table_width = max(22, (content_width - table_gap) // 2)
+    teams = [
+        (getattr(state, side), getattr(state.source.teams, side))
+        for side in ("away", "home")
+    ]
+    batting_stats_head = (
+        f"{'AB':>2} {'R':>1} {'H':>1} {'RBI':>3} {'BB':>2} {'K':>1}"
+    )
+    pitching_stats_head = f"{'IP':>4} {'H':>2} {'R':>1} {'BB':>2} {'K':>1}"
+    batting_name_limit = max(
+        3, table_width - 6 - 3 - len(batting_stats_head)
+    )
+    pitching_name_limit = max(
+        4, table_width - 1 - 3 - len(pitching_stats_head)
+    )
+    batting_name_width = max(
+        len(_short_name(team.player(player_id).name, batting_name_limit))
+        for team_state, team in teams
+        for player_id in team_state.lineup
+    )
+    pitching_name_width = max(
+        len(_short_name(player.name, pitching_name_limit))
+        for _, team in teams
+        for player in team.roster
+        if player.pitch_die
+    )
+    team_columns = []
+    for team_state, team in teams:
         defense = {
             assignment.player_id: assignment.position
             for assignment in team_state.active_defense
         }
-        lines.extend(("", _ends(team.name.upper(), "PA  H  R", content_width)))
+        column = [
+            team.short_name.upper().center(table_width),
+            "# POS PLAYER".ljust(6 + batting_name_width)
+            + " " * 3
+            + batting_stats_head,
+        ]
         for index, player_id in enumerate(team_state.lineup):
             player = team.player(player_id)
             position = defense.get(player_id, player.positions[0])
             marker = ">" if index == team_state.batting_order_index else " "
             stats = batting.get(player_id)
-            pa = getattr(stats, "plate_appearances", 0)
+            ab = getattr(stats, "at_bats", 0)
             hits = getattr(stats, "hits", 0)
             runs = getattr(stats, "runs", 0)
-            prefix = f"{marker}{index + 1}. {position:<2} "
-            suffix = f" {pa:>2} {hits:>2} {runs:>2}"
-            name = _short_name(player.name, content_width - len(prefix) - len(suffix))
-            lines.append(prefix + name.ljust(content_width - len(prefix) - len(suffix)) + suffix)
+            rbi = getattr(stats, "rbi", 0)
+            walks = getattr(stats, "walks", 0)
+            strikeouts = getattr(stats, "strikeouts", 0)
+            prefix = f"{marker}{index + 1} {position:<2} "
+            stats_text = (
+                f"{ab:>2} {runs:>1} {hits:>1} {rbi:>3} {walks:>2} {strikeouts:>1}"
+            )
+            name = _short_name(player.name, batting_name_limit)
+            column.append(
+                prefix
+                + name.ljust(batting_name_width)
+                + " " * 3
+                + stats_text
+            )
+        lineup_ids = set(team_state.lineup)
+        others = [
+            player
+            for player in team.roster
+            if player.player_id not in lineup_ids and not player.pitch_die
+        ]
+        column.extend(("", "BENCH / REMOVED"))
+        column.extend(" " * 6 + _short_name(player.name, table_width - 6) for player in others)
+        pitchers = [player for player in team.roster if player.pitch_die]
+        column.extend(
+            (
+                "",
+                "PITCHERS".ljust(1 + pitching_name_width)
+                + " " * 3
+                + pitching_stats_head,
+            )
+        )
+        for player in pitchers:
+            stats = pitching.get(player.player_id)
+            ip = getattr(stats, "innings_pitched", "0.0")
+            stats_text = (
+                f"{ip:>4} {getattr(stats, 'hits', 0):>2}"
+                f" {getattr(stats, 'runs', 0):>1} {getattr(stats, 'walks', 0):>2}"
+                f" {getattr(stats, 'strikeouts', 0):>1}"
+            )
+            marker = ">" if player.player_id == team_state.active_pitcher_id else " "
+            name = _short_name(player.name, pitching_name_limit)
+            column.append(
+                marker
+                + name.ljust(pitching_name_width)
+                + " " * 3
+                + stats_text
+            )
+        team_columns.append(column)
+    lines = [_ends("BOX SCORE / LINEUPS", "[Tab: Field]", content_width), ""]
+    for index in range(max(map(len, team_columns))):
+        items = tuple(
+            column[index] if index < len(column) else ""
+            for column in team_columns
+        )
+        lines.append(_paired_columns(items, content_width, gap=table_gap))
     return lines
 
 
@@ -303,6 +423,24 @@ def _full_width_rows(
     ]
 
 
+def _centered_width_rows(
+    lines: Iterable[str], width: int, height: int
+) -> list[str]:
+    content_width = max(1, width - 2)
+    rendered = [
+        textwrap.shorten(str(line), width=content_width, placeholder="…")
+        if len(str(line)) > content_width
+        else str(line)
+        for line in lines
+    ]
+    return [
+        "| "
+        + (rendered[index] if index < len(rendered) else "").center(content_width)
+        + " |"
+        for index in range(height)
+    ]
+
+
 def _center(text: str, width: int) -> str:
     return text[:width].center(width)
 
@@ -324,6 +462,42 @@ def _columns(items: tuple[str, ...], width: int) -> str:
     return "".join(cells)
 
 
+def _paired_columns(items: tuple[str, str], width: int, *, gap: int = 2) -> str:
+    """Left-align two fixed tables with a stable gutter between them."""
+    usable = max(2, width - gap)
+    left_width = usable // 2
+    right_width = usable - left_width
+    return (
+        items[0][:left_width].ljust(left_width)
+        + " " * gap
+        + items[1][:right_width].ljust(right_width)
+    )
+
+
+def _columns_shifted(
+    items: tuple[str, ...], width: int, *, shifts: tuple[int, ...]
+) -> str:
+    """Place items in equal cells with explicit horizontal offsets."""
+    count = len(items)
+    base, remainder = divmod(width, count)
+    row = [" "] * width
+    cell_start = 0
+    for index, item in enumerate(items):
+        cell_width = base + (1 if index < remainder else 0)
+        visible = item[:width]
+        start = max(
+            0,
+            min(
+                width - len(visible),
+                cell_start + (cell_width - len(visible)) // 2 + shifts[index],
+            ),
+        )
+        for offset, character in enumerate(visible):
+            row[start + offset] = character
+        cell_start += cell_width
+    return "".join(row)
+
+
 def _short_name(name: str, limit: int) -> str:
     if len(name) <= limit:
         return name
@@ -333,3 +507,9 @@ def _short_name(name: str, limit: int) -> str:
         if len(compact) <= limit:
             return compact
     return name[: max(1, limit - 3)] + "..."
+
+
+def _runner_text(name: str, limit: int) -> str:
+    if not name:
+        return ""
+    return "Runner: " + _short_name(name, max(1, limit - 8))

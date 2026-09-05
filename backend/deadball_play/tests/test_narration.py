@@ -179,6 +179,61 @@ def test_double_play_guidance_identifies_the_play_without_inventing_a_relay():
     assert "3-6-3" not in " ".join(rendered.scoring_guidance)
 
 
+def test_flyout_names_the_actual_fielder_and_reports_out_count():
+    before = initial_state()
+    after = replace(before, outs=1)
+    event = play("flyout", fielded_by="LF", scoring_notation="F-7", outs_added=1)
+
+    rendered = Narrator(random.Random(3)).render(event, before, after)
+
+    assert "Hosts Hitter 6" in rendered.play_text
+    assert "left fielder" in rendered.play_text.lower()
+    assert "There is one out." in rendered.play_text
+
+
+def test_grand_slam_is_called_a_grand_slam():
+    before = replace(
+        initial_state(),
+        bases=("away-h2", "away-h3", "away-h4"),
+    )
+    after = replace(before, away_score=4, bases=(None, None, None))
+    event = play(
+        "home_run",
+        classification="ordinary_hit",
+        scoring_notation="HR",
+        hit_type="home_run",
+        runs_scored=4,
+        runner_moves=(
+            RunnerMove("away-h2", "1B", "HOME", scored=True),
+            RunnerMove("away-h3", "2B", "HOME", scored=True),
+            RunnerMove("away-h4", "3B", "HOME", scored=True),
+            RunnerMove("away-h1", "BATTER", "HOME", scored=True),
+        ),
+    )
+
+    rendered = Narrator(random.Random(2)).render(event, before, after)
+
+    assert rendered.family == "grand_slam"
+    assert "grand slam" in rendered.play_text.lower()
+
+
+def test_half_inning_transition_reports_runners_left_on_base():
+    before = replace(initial_state(), outs=2, bases=(None, "away-h2", None))
+    after = replace(before, inning=1, half="bottom", outs=0, bases=(None, None, None))
+    event = play(
+        "flyout",
+        fielded_by="LF",
+        scoring_notation="F-7",
+        outs_added=1,
+        runner_moves=(RunnerMove("away-h1", "BATTER", out=True),),
+    )
+
+    rendered = Narrator(random.Random(4)).render(event, before, after)
+
+    assert "That is the third out." in rendered.play_text
+    assert "VIS leaves 1 runner on base." in rendered.transition_text
+
+
 def test_run_scoring_context_only_describes_verified_tie_or_lead():
     before = replace(initial_state(), away_score=1, home_score=2)
     tied = replace(before, away_score=2)
