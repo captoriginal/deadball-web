@@ -40,7 +40,12 @@ def _fmt_number(val: str | None) -> str:
     return str(num)
 
 
-def read_hitters_by_team(csv_path: Path) -> dict[str, list[MutableMapping[str, str]]]:
+def read_hitters_by_team(
+    csv_path: Path,
+) -> tuple[
+    dict[str, list[MutableMapping[str, str]]],
+    dict[str, list[MutableMapping[str, str]]],
+]:
     hitters: dict[str, list[MutableMapping[str, str]]] = {}
     pitchers: dict[str, list[MutableMapping[str, str]]] = {}
     with csv_path.open(newline="", encoding="utf-8") as fh:
@@ -81,16 +86,18 @@ def _fmt_traits(val: str | Iterable[str] | None) -> str:
         items = list(val)
     else:
         text = str(val).strip()
-        # Strip one level of wrapping quotes if present (e.g., "\"[\\\"GB\\\", \\\"K\\\"]\"")
-        if (text.startswith('"') and text.endswith('"')) or (text.startswith("'") and text.endswith("'")):
-            text = text[1:-1]
-            text = text.strip()
         if not text:
             return ""
-        try:
-            parsed = json.loads(text)
-        except Exception:
-            parsed = None
+        parsed = None
+        for _ in range(2):
+            try:
+                parsed = json.loads(text)
+            except (TypeError, ValueError):
+                break
+            if isinstance(parsed, str):
+                text = parsed.strip()
+                continue
+            break
 
         if isinstance(parsed, (list, tuple, set)):
             items = list(parsed)
@@ -100,7 +107,11 @@ def _fmt_traits(val: str | Iterable[str] | None) -> str:
             # Handle Python repr strings like "['GB', 'K']"
             if text.startswith("[") and text.endswith("]"):
                 inner = text[1:-1]
-                items = [seg.strip(" '\"") for seg in inner.split(",") if seg.strip(" '\"")]
+                items = [
+                    segment.strip(" '\"")
+                    for segment in inner.split(",")
+                    if segment.strip(" '\"")
+                ]
             else:
                 return text
 
@@ -243,7 +254,12 @@ def build_pitcher_rows(pitchers: Sequence[Mapping[str, str]], label: str) -> str
     return "\n".join(rows)
 
 
-def replace_tbody_in_section(html_text: str, section_class: str, new_body: str, occurrence: int = 0) -> str:
+def replace_tbody_in_section(
+    html_text: str,
+    section_class: str,
+    new_body: str,
+    occurrence: int = 0,
+) -> str:
     """
     Replace the nth <tbody> (0-indexed) that appears after a specific scorecard section marker.
     """
@@ -255,11 +271,26 @@ def replace_tbody_in_section(html_text: str, section_class: str, new_body: str, 
     start_tag = "<tbody>"
     end_tag = "</tbody>"
 
+    other_markers = [
+        html_text.find(
+            f'<div class="{candidate} scorecard">',
+            start_idx + len(marker),
+        )
+        for candidate in TEAM_SPANS
+        if candidate != section_class
+    ]
+    section_end = min(
+        (index for index in other_markers if index >= 0),
+        default=len(html_text),
+    )
     tbody_start = start_idx
     for _ in range(occurrence + 1):
-        tbody_start = html_text.find(start_tag, tbody_start)
+        tbody_start = html_text.find(start_tag, tbody_start, section_end)
         if tbody_start == -1:
-            raise ValueError(f"No <tbody> #{occurrence} found after section '{section_class}'.")
+            raise ValueError(
+                f"No <tbody> #{occurrence} found after section "
+                f"'{section_class}'."
+            )
         # Move past this start for the next search
         tbody_start += len(start_tag)
     tbody_start -= len(start_tag)
@@ -275,6 +306,23 @@ def replace_tbody_in_section(html_text: str, section_class: str, new_body: str, 
         + "\n"
         + html_text[tbody_end:]
     )
+
+
+def replace_optional_tbody_in_section(
+    html_text: str,
+    section_class: str,
+    new_body: str,
+    occurrence: int,
+) -> str:
+    """Fill an optional auxiliary table when the template provides it."""
+    try:
+        return replace_tbody_in_section(
+            html_text, section_class, new_body, occurrence=occurrence
+        )
+    except ValueError as exc:
+        if "No <tbody>" not in str(exc):
+            raise
+        return html_text
 
 
 def replace_team_label(html_text: str, which: str, team_name: str) -> str:
@@ -375,10 +423,18 @@ def main_from_parsed(opts: argparse.Namespace) -> None:
     template_text = replace_team_label(template_text, "home", home_team)
     filled_html = replace_tbody_in_section(template_text, "away", away_lineup, occurrence=0)
     filled_html = replace_tbody_in_section(filled_html, "home", home_lineup, occurrence=0)
-    filled_html = replace_tbody_in_section(filled_html, "away", away_bench_rows, occurrence=1)
-    filled_html = replace_tbody_in_section(filled_html, "home", home_bench_rows, occurrence=1)
-    filled_html = replace_tbody_in_section(filled_html, "away", away_pitch_rows, occurrence=2)
-    filled_html = replace_tbody_in_section(filled_html, "home", home_pitch_rows, occurrence=2)
+    filled_html = replace_optional_tbody_in_section(
+        filled_html, "away", away_bench_rows, occurrence=1
+    )
+    filled_html = replace_optional_tbody_in_section(
+        filled_html, "home", home_bench_rows, occurrence=1
+    )
+    filled_html = replace_optional_tbody_in_section(
+        filled_html, "away", away_pitch_rows, occurrence=2
+    )
+    filled_html = replace_optional_tbody_in_section(
+        filled_html, "home", home_pitch_rows, occurrence=2
+    )
 
     output_path = opts.output or derive_output_path(opts.csv, away_team, home_team)
     output_path.write_text(filled_html, encoding="utf-8")

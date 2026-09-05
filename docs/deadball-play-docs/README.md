@@ -251,3 +251,9 @@ screen.
 An interactive terminal uses the three-column interface automatically. Add
 `--line-mode` for redirected input, accessibility tooling, or a compact
 compatibility interface.
+
+Run the complete Version 1 Python and Web release gate with:
+
+```console
+./scripts/check-deadball-v1
+```

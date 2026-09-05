@@ -9,8 +9,9 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 def test_read_hitters_by_team_sorts_and_filters() -> None:
-    hitters = fill.read_hitters_by_team(FIXTURES / "sample_game.csv")
+    hitters, pitchers = fill.read_hitters_by_team(FIXTURES / "sample_game.csv")
     assert set(hitters.keys()) == {"Alpha", "Beta"}
+    assert [pitcher["Name"] for pitcher in pitchers["Alpha"]] == ["Pat"]
     # Beta hitters should be ordered by BatOrder including decimal pinch hitters
     beta_names = [h["Name"] for h in hitters["Beta"]]
     assert beta_names == ["Bob", "Charlie"]

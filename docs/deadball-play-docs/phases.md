@@ -879,6 +879,34 @@ from dice roll through confirmation and inning transition.
 
 ---
 
+# Phase 18 — Unified Version 1 Release Gate
+
+## Goal
+
+Remove historical test exclusions and make release readiness reproducible with
+one repository command.
+
+## Implement
+
+- restore the legacy scorecard-fill compatibility tests to the maintained gate
+- isolate games API tests from live MLB network behavior
+- run every generator, core, play, and backend test without exclusions
+- build the production Web interface
+- report the optional Tauri/Rust check explicitly when Cargo is unavailable
+- provide `scripts/check-deadball-v1` as the repeatable release command
+
+## Rulebook Use
+
+None. This phase changes compatibility, test isolation, and release procedure,
+not gameplay mechanics.
+
+## Done When
+
+Every Python test and the production Web build pass through one documented
+command, with no legacy test group omitted from the Version 1 result.
+
+---
+
 # Version 1 Release Gate
 
 Version 1 should not be considered complete until:

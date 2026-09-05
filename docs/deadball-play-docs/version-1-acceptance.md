@@ -26,19 +26,28 @@ The release checks cover:
 - the installed command and a real full-screen pseudo-terminal session; and
 - the frontend production build.
 
-The final maintained-suite run passed 680 tests: 249 core tests, 280 generator
-tests, 91 play/session/TUI tests, and 60 current backend tests. The Vite
+The unified release run passed 699 tests: 249 core tests, 283 generator tests,
+104 play/session/TUI tests, and 63 backend tests. The Vite
 production build also completed successfully. The complete-game dashboard test
 rendered 148 intermediate screens plus the final state during its 74-action
 seeded game.
 
+Run the complete gate from the repository root with:
+
+```console
+./scripts/check-deadball-v1
+```
+
+The script reports the optional Tauri desktop compile separately and runs it
+when Cargo is installed. The Python and Web release paths do not require Rust.
+
 The local licensed Deadball rulebook remains ignored and is not part of the
 release artifact or any GitHub-bound change.
 
-## Known Legacy Exclusions
+## Legacy Exclusions Closed
 
-Two older test groups remain outside the green Version 1 regression command:
-the generator's legacy scorecard-fill tests and the backend's legacy games API
-tests. Their existing failures predate the conductor and exercise older output
-contracts. The maintained generator, core, play, and current backend suites are
-the release gate; cleanup of those legacy expectations remains deferred.
+The generator's older scorecard-fill tests and the backend's older games API
+tests are now part of the same green release gate. Simple one-table scorecard
+templates remain compatible, double-encoded trait lists normalize correctly,
+and games API tests use deterministic offline MLB responses instead of relying
+on an implicit network or stub.

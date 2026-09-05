@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON_BIN="$PROJECT_ROOT/.venv/bin/python"
+
+if [ ! -x "$PYTHON_BIN" ]; then
+  echo "Deadball Play virtual environment not found."
+  echo "Run ./scripts/install-deadball-play first."
+  exit 1
+fi
+
+echo "Checking Deadball generator..."
+"$PYTHON_BIN" -m pytest -q "$PROJECT_ROOT/backend/deadball_generator/tests"
+
+echo "Checking Deadball rules core..."
+"$PYTHON_BIN" -m pytest -q "$PROJECT_ROOT/backend/deadball_core/tests"
+
+echo "Checking Deadball Play..."
+"$PYTHON_BIN" -m pytest -q "$PROJECT_ROOT/backend/deadball_play/tests"
+
+echo "Checking Web API..."
+"$PYTHON_BIN" -m pytest -q "$PROJECT_ROOT/backend/tests"
+
+echo "Building the Web interface..."
+npm --prefix "$PROJECT_ROOT/frontend" run build
+
+if command -v cargo >/dev/null 2>&1; then
+  echo "Checking the optional Tauri desktop shell..."
+  cargo check --manifest-path "$PROJECT_ROOT/src-tauri/Cargo.toml"
+else
+  echo "Cargo is unavailable; optional Tauri desktop check skipped."
+fi
+
+echo "Deadball Version 1 release checks passed."
